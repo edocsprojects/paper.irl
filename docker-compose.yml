@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: paper
+      POSTGRES_PASSWORD: paper
+      POSTGRES_DB: paper_irl
+    ports:
+      - "5432:5432"
+    volumes:
+      - paper_pg:/var/lib/postgresql/data
+
+volumes:
+  paper_pg:

@@ -1,0 +1,17 @@
+{
+  "name": "paper-irl",
+  "private": true,
+  "version": "0.1.0",
+  "description": "IRL paper.io on campus roads — Keller Hall MVP",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm --filter @paper-irl/rules test && pnpm sim:lobby",
+    "sim:lobby": "pnpm --filter @paper-irl/rules build && pnpm --filter @paper-irl/sim start",
+    "dev:server": "pnpm --filter @paper-irl/server dev",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
