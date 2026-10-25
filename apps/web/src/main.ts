@@ -1,37 +1,56 @@
-import { buildArena, buildKellerArena, KELLER, pointInTerritory, type Effect, type LatLon } from "@paper-irl/rules";
+import { buildArena, haversineM, KELLER, pointInTerritory, type Effect, type LatLon } from "@paper-irl/rules";
 import { accessToken, authReady, initAuth, signInWithGoogle, signOut, type GoogleUser } from "./auth.js";
 import { LocalMatch, type SimSnapshot, type SimSnapshotSeat } from "./botSim.js";
 import { LiveMatch } from "./liveGame.js";
 import { GameMap } from "./mapView.js";
-import { loadProfile, saveProfile } from "./profile.js";
+import { HISTORY_MAX, loadProfile, saveProfile, type GameRecord } from "./profile.js";
 import { startLoopScene } from "./loopScene.js";
+import { COMMUNITY_EVENTS, type CommunityEvent } from "./events.js";
 import "./styles.css";
 
 /**
  * Your app's flow (Home → Create/Join → Lobby → countdown → Game → Results)
  * in the teammate's design. Home + Settings tabs are always visible.
  */
-type Screen = "intro" | "home" | "create" | "join" | "lobby" | "events" | "event" | "game" | "results" | "settings";
+type Screen =
+  | "intro"
+  | "home"
+  | "create"
+  | "join"
+  | "lobby"
+  | "events"
+  | "event"
+  | "game"
+  | "results"
+  | "stats"
+  | "settings";
+const M_PER_MI = 1609.344;
+const FT2_PER_ACRE = 43560;
+
+/** "1.24 mi" (or feet under a tenth of a mile). */
+function formatMiles(m: number): string {
+  const mi = m / M_PER_MI;
+  return mi < 0.1 ? `${Math.round(m * 3.28084).toLocaleString("en-US")} ft` : `${mi.toFixed(mi < 10 ? 2 : 1)} mi`;
+}
+
+/** Big areas read better in acres (Strava-style compact numbers). */
+function formatLand(m2: number): string {
+  const ft2 = m2 * 10.7639;
+  return ft2 >= FT2_PER_ACRE / 2 ? `${(ft2 / FT2_PER_ACRE).toFixed(2)} ac` : `${Math.round(ft2).toLocaleString("en-US")} ft²`;
+}
+
+/** Pace in min/mi, e.g. 12'05"/mi. */
+function formatPace(ms: number, m: number): string {
+  if (m < 30 || ms <= 0) return "–";
+  const sPerMi = ms / 1000 / (m / M_PER_MI);
+  const mm = Math.floor(sPerMi / 60);
+  const ss = Math.round(sPerMi % 60).toString().padStart(2, "0");
+  return mm > 99 ? "–" : `${mm}'${ss}"/mi`;
+}
 const DEAD_TEXT = "You're out — head back to your spawn area";
-const EVENT_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** Compact HUD countdown for multi-day events: "6d 23h", else h:mm:ss. */
-function hudCountdown(ms: number): string {
-  const sec = Math.max(0, Math.floor(ms / 1000));
-  const d = Math.floor(sec / 86400);
-  if (d) return `${d}d ${Math.floor((sec % 86400) / 3600)}h`;
-  return formatCountdown(ms);
-}
-
-/** Event countdown: "6d 23:59:59". */
-function formatCountdown(ms: number): string {
-  const sec = Math.max(0, Math.floor(ms / 1000));
-  const d = Math.floor(sec / 86400);
-  const hms = [Math.floor((sec % 86400) / 3600), Math.floor((sec % 3600) / 60), sec % 60]
-    .map((n) => n.toString().padStart(2, "0"))
-    .join(":");
-  return d ? `${d}d ${hms}` : hms;
-}
+const OUTSIDE_TEXT = "You're outside the circle — head back in";
+/** How long after the last out-of-bounds fix the "outside" snackbar stays up. */
+const OUTSIDE_HOLD_MS = 2500;
 
 const FT_PER_M = 3.28084;
 const COUNTDOWN_STEP_MS = 700;
@@ -84,7 +103,7 @@ type Session =
   | { kind: "sim"; match: LocalMatch; config: Config; center: LatLon }
   | { kind: "live"; config: Config | null }
   /** Keller Hall community event: local bots in Simulation, the server event otherwise. */
-  | { kind: "event"; sim: LocalMatch | null };
+  | { kind: "event"; sim: LocalMatch | null; event: CommunityEvent };
 
 type Phase = "lobby" | "countdown" | "playing" | "results";
 
@@ -97,8 +116,10 @@ async function main() {
       return token ? { Authorization: `Bearer ${token}` } : { "X-Guest-Id": profile.guestId };
     },
   );
-  /** Simulation's Keller event keeps running in the background once opened. */
-  let eventSim: LocalMatch | null = null;
+  /** Simulated events keep running in the background once opened. */
+  const eventSims = new Map<string, LocalMatch>();
+  /** Live summaries (players / time left) from GET /events in Real GPS. */
+  let eventSummaries = new Map<string, { players: number; endsAtMs: number; nowMs: number }>();
 
   let screen: Screen = "intro";
   let session: Session | null = null;
@@ -119,6 +140,95 @@ async function main() {
   let leaderId: number | null = null;
   let warnedMinute = false;
   let resultsSnap: SimSnapshot | null = null;
+
+  /** This game's activity (distance, cuts, deaths…) for the Stats page. */
+  type Run = {
+    kind: "lobby" | "event";
+    label?: string;
+    sim: boolean;
+    startMs: number;
+    lastPos: LatLon | null;
+    distanceM: number;
+    cuts: number;
+    deaths: number;
+    bestClaimM2: number;
+    stolenM2: number;
+  };
+  let run: Run | null = null;
+
+  function startRun(kind: Run["kind"], sim: boolean) {
+    const s = snap();
+    run = {
+      kind,
+      sim,
+      startMs: s?.nowMs ?? Date.now(),
+      lastPos: null,
+      distanceM: 0,
+      cuts: 0,
+      deaths: 0,
+      bestClaimM2: 0,
+      stolenM2: 0,
+    };
+  }
+
+  /** Accumulate distance moved while you're alive (ignores respawn jumps). */
+  function trackRun(s: SimSnapshot) {
+    if (!run || phase !== "playing") return;
+    const you = s.you;
+    if (!you || !Number.isFinite(you.lat) || (you.mode !== "safe" && you.mode !== "trailing")) {
+      if (run) run.lastPos = null;
+      return;
+    }
+    const p = { lat: you.lat, lon: you.lon };
+    if (run.lastPos) {
+      const d = haversineM(run.lastPos.lat, run.lastPos.lon, p.lat, p.lon);
+      if (d < 60) run.distanceM += d;
+    }
+    run.lastPos = p;
+  }
+
+  /** Save the game you just finished (or left) to your history + lifetime totals. */
+  function recordRun(s: SimSnapshot | null) {
+    const r = run;
+    run = null;
+    if (!r || !s) return;
+    const durationMs = Math.max(0, s.nowMs - r.startMs);
+    if (durationMs < 10_000 && r.distanceM < 20) return; // not really a game
+    const ranked = [...s.seats].sort((a, b) => b.areaM2 - a.areaM2);
+    const area = s.you?.areaM2 ?? 0;
+    const rank = s.you && area > 0 ? ranked.findIndex((x) => x.id === s.you!.id) + 1 : null;
+    const rec: GameRecord = {
+      atMs: Date.now(),
+      kind: r.kind,
+      sim: r.sim,
+      areaM2: area,
+      rank,
+      players: s.seats.length,
+      distanceM: r.distanceM,
+      durationMs,
+      cuts: r.cuts,
+      deaths: r.deaths,
+      bestClaimM2: r.bestClaimM2,
+      stolenM2: r.stolenM2,
+      won: rank === 1,
+      label: r.label,
+    };
+    profile.history = [rec, ...profile.history].slice(0, HISTORY_MAX);
+    profile.gamesPlayed += 1;
+    profile.allTimeScoreM2 += area;
+    profile.bestGameM2 = Math.max(profile.bestGameM2, area);
+    profile.totalPlayMs += durationMs;
+    if (rank && (profile.bestRank === null || rank < profile.bestRank)) profile.bestRank = rank;
+    if (rec.won) profile.wins += 1;
+    profile.totalDistanceM += r.distanceM;
+    profile.totalCuts += r.cuts;
+    profile.totalDeaths += r.deaths;
+    profile.totalStolenM2 += r.stolenM2;
+    profile.bestClaimM2 = Math.max(profile.bestClaimM2, r.bestClaimM2);
+    profile.longestRunM = Math.max(profile.longestRunM, r.distanceM);
+    profile.mostCuts = Math.max(profile.mostCuts, r.cuts);
+    saveProfile(profile);
+  }
 
   // ---------- helpers ----------
   function snap(): SimSnapshot | null {
@@ -153,8 +263,11 @@ async function main() {
   /** Single-slot snackbar about YOU; fades after 3 s. */
   let snackTimer = 0;
   let deadShown = false;
+  /** Sticky "outside the circle" snackbar: last out-of-bounds fix (wall clock). */
+  let outsideAt = 0;
+  let outsideShown = false;
   function snack(text: string, tone: "good" | "bad" | "warn" | "" = "") {
-    if (deadShown) return; // while you're out, the snackbar only says where to go
+    if (deadShown || outsideShown) return; // while you're out, the snackbar only says where to go
     const el = $("snackbar");
     el.textContent = text;
     el.className = `snackbar ${tone}`.trim();
@@ -191,7 +304,7 @@ async function main() {
     });
     $("app").classList.toggle("on-intro", next === "intro");
     $("tabs").hidden = next === "intro";
-    const tab = next === "settings" ? "settings" : "home";
+    const tab = next === "settings" ? "settings" : next === "stats" ? "stats" : "home";
     document.querySelectorAll<HTMLElement>(".tab").forEach((el) => {
       el.classList.toggle("active", el.dataset.tab === tab && next !== "intro");
     });
@@ -217,7 +330,12 @@ async function main() {
     el.addEventListener("click", () => show(el.dataset.go as Screen)),
   );
   document.querySelectorAll<HTMLElement>("[data-tab]").forEach((el) =>
-    el.addEventListener("click", () => (el.dataset.tab === "settings" ? show("settings") : goHome())),
+    el.addEventListener("click", () => {
+      const tab = el.dataset.tab;
+      if (tab === "settings") show("settings");
+      else if (tab === "stats") show("stats");
+      else goHome();
+    }),
   );
 
   // ---------- intro / sign-in ----------
@@ -292,35 +410,65 @@ async function main() {
 
   // ---------- Community event (Keller Hall) ----------
   $("btn-events").addEventListener("click", () => {
-    if (session?.kind === "event" && !!session.sim === isSim() && phase === "playing") show("game");
-    else show("events");
+    show("events");
+    void refreshEventSummaries();
   });
 
-  $("event-keller").addEventListener("click", async () => {
+  async function refreshEventSummaries() {
+    if (isSim()) return;
+    try {
+      const res = await fetch("/api/events");
+      const j = (await res.json()) as { events: { id: string; players: number; endsAtMs: number; nowMs: number }[] };
+      eventSummaries = new Map(j.events.map((e) => [e.id, e]));
+    } catch {
+      eventSummaries = new Map();
+    }
+    paintUi(true);
+  }
+
+  $("events-list").addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLElement>("[data-event]");
+    const e = COMMUNITY_EVENTS.find((x) => x.id === btn?.dataset.event);
+    if (e) void openEvent(e);
+  });
+
+  async function openEvent(e: CommunityEvent) {
     // Reuse the open event unless Settings switched Simulation / Real GPS.
-    if (session?.kind === "event" && !!session.sim === isSim()) {
+    if (session?.kind === "event" && session.event.id === e.id && !!session.sim === isSim()) {
       show(phase === "playing" ? "game" : "event");
       return;
     }
+    if (phase === "playing") recordRun(snap());
     leaveSession();
     if (isSim()) {
-      if (!eventSim) {
-        eventSim = new LocalMatch({ arena: buildKellerArena(), youName: profile.name, players: 8, durationMs: EVENT_MS });
-        eventSim.youActive = false;
-        eventSim.start();
+      let sim = eventSims.get(e.id);
+      if (!sim || sim.ended) {
+        sim = new LocalMatch({
+          arena: buildArena({ radiusM: e.radiusM, centerLat: e.centerLat, centerLon: e.centerLon }),
+          youName: profile.name,
+          players: 8,
+          durationMs: e.durationMs,
+        });
+        sim.youActive = false;
+        sim.start();
+        eventSims.set(e.id, sim);
       }
-      session = { kind: "event", sim: eventSim };
+      session = { kind: "event", sim, event: e };
+      phase = null;
+      show("event");
     } else {
-      session = { kind: "event", sim: null };
+      // Show the event right away; the live state fills in when the server answers.
+      session = { kind: "event", sim: null, event: e };
+      phase = null;
+      map.setArena(buildArena({ radiusM: e.radiusM, centerLat: e.centerLat, centerLon: e.centerLon }));
+      show("event");
       try {
-        await live.openEvent();
+        await live.openEvent(e.id);
       } catch (err) {
         toast(err instanceof Error ? err.message : String(err));
       }
     }
-    phase = null;
-    show("event");
-  });
+  }
 
   $("btn-claim").addEventListener("click", async () => {
     if (session?.kind !== "event") return;
@@ -341,13 +489,15 @@ async function main() {
     }
     resetSnackbar();
     phase = "playing";
+    startRun("event", !!session.sim);
+    if (run) run.label = session.event.name;
     plantedOnce = false;
     seen = { feed: 0, notice: 0, pop: 0 };
     markSeen(snap());
     raidAt.clear();
     raidersInside = new Set();
     leaderId = null;
-    warnedMinute = true; // a 7-day event doesn't need a 1-minute warning
+    warnedMinute = false;
     $("kill-feed").innerHTML = "";
     show("game");
   });
@@ -490,6 +640,8 @@ async function main() {
 
   function resetSnackbar() {
     deadShown = false;
+    outsideShown = false;
+    outsideAt = 0;
     window.clearTimeout(snackTimer);
     $("snackbar").className = "snackbar hidden";
   }
@@ -525,6 +677,7 @@ async function main() {
       live.armed = false;
       live.startTracking();
     }
+    startRun("lobby", session?.kind === "sim");
     show("game");
   }
 
@@ -540,6 +693,7 @@ async function main() {
   });
 
   $("btn-leave").addEventListener("click", () => {
+    if (phase === "playing") recordRun(snap());
     if (session?.kind === "event") {
       // Stop playing but keep watching the event.
       if (session.sim) session.sim.youActive = false;
@@ -556,18 +710,8 @@ async function main() {
   function endGame() {
     const s = snap();
     resultsSnap = s;
+    recordRun(s);
     phase = "results";
-    const you = s?.you ?? null;
-    const ranked = s ? [...s.seats].sort((a, b) => b.areaM2 - a.areaM2) : [];
-    const rank = you ? ranked.findIndex((x) => x.id === you.id) + 1 : 0;
-    const area = you?.areaM2 ?? 0;
-    profile.gamesPlayed += 1;
-    profile.allTimeScoreM2 += area;
-    profile.bestGameM2 = Math.max(profile.bestGameM2, area);
-    profile.totalPlayMs += s ? Math.max(0, s.nowMs - s.startedAtMs) : 0;
-    if (rank && area > 0 && (profile.bestRank === null || rank < profile.bestRank)) profile.bestRank = rank;
-    if (rank === 1 && area > 0) profile.wins += 1;
-    saveProfile(profile);
     if (session?.kind === "live") live.stopTracking();
     show("results");
   }
@@ -597,8 +741,11 @@ async function main() {
     const me = youId();
     if (me === null || phase !== "playing") return;
     for (const e of effects) {
-      if (e.kind === "banked" && e.seatId === me && e.gainedM2 >= 1) snack(`+${formatArea(e.gainedM2)} claimed`, "good");
-      if (e.kind === "boundaryPush" && e.seatId === me) snack("Outside the boundary", "warn");
+      if (e.kind === "banked" && e.seatId === me && e.gainedM2 >= 1) {
+        snack(`+${formatArea(e.gainedM2)} claimed`, "good");
+        if (run) run.bestClaimM2 = Math.max(run.bestClaimM2, e.gainedM2);
+      }
+      if (e.kind === "boundaryPush" && e.seatId === me) outsideAt = Date.now();
     }
   }
 
@@ -628,6 +775,8 @@ async function main() {
         `${dot(f.byId)}<b>${escapeHtml(name(f.byId))}</b> ${verb} <b>${escapeHtml(name(f.victimId))}</b>${f.reason === "captured" ? "'s land" : ""}${dot(f.victimId)}`,
         f.byId === me || f.victimId === me,
       );
+      if (run && f.victimId === me) run.deaths += 1;
+      if (run && f.byId === me && f.victimId !== me) run.cuts += 1;
       if (f.byId === me && f.victimId !== me) {
         snack(f.reason === "captured" ? `You took all of ${name(f.victimId)}'s land!` : `You cut ${name(f.victimId)}`, "good");
       }
@@ -637,6 +786,7 @@ async function main() {
       if (n.atMs <= seen.notice || n.lostM2 < 5) continue;
       if (n.seatId === me && n.byId !== me) snack(`${name(n.byId)} took ${formatArea(n.lostM2)} of your land`, "bad");
       else if (n.byId === me) snack(`You took ${formatArea(n.lostM2)} from ${name(n.seatId)}`, "good");
+      if (run && n.byId === me && n.seatId !== me) run.stolenM2 += n.lostM2;
     }
     for (const p of s.pops) {
       if (p.atMs <= seen.pop || p.seatId !== me) continue;
@@ -747,6 +897,78 @@ async function main() {
     </li>`;
   }
 
+  function paintStats() {
+    const h = profile.history;
+    // This week (rolling 7 days, ending today).
+    const day0 = new Date();
+    day0.setHours(0, 0, 0, 0);
+    const days = Array.from({ length: 7 }, (_, i) => new Date(day0.getTime() - (6 - i) * 86_400_000));
+    const inDay = (r: GameRecord, d: Date) => r.atMs >= d.getTime() && r.atMs < d.getTime() + 86_400_000;
+    const week = h.filter((r) => r.atMs >= days[0]!.getTime());
+    const sum = (rs: GameRecord[], k: "distanceM" | "areaM2") => rs.reduce((t, r) => t + r[k], 0);
+    $("week-range").textContent = `${days[0]!.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – today`;
+    $("wk-distance").textContent = formatMiles(sum(week, "distanceM"));
+    $("wk-area").textContent = formatLand(sum(week, "areaM2"));
+    $("wk-games").textContent = String(week.length);
+    const perDay = days.map((d) => sum(h.filter((r) => inDay(r, d)), "areaM2"));
+    const max = Math.max(1, ...perDay);
+    $("week-bars").innerHTML = days
+      .map((d, i) => {
+        const v = perDay[i]!;
+        const pct = Math.max(3, Math.round((v / max) * 100));
+        const label = d.toLocaleDateString("en-US", { weekday: "narrow" });
+        return `<div class="week-bar${v ? "" : " empty"}${i === 6 ? " today" : ""}" title="${formatLand(v)}"><i style="height:${v ? pct : 3}%"></i><span>${label}</span></div>`;
+      })
+      .join("");
+
+    // Personal records.
+    const prs: [string, string, string][] = [
+      ["XL", "Biggest single claim", profile.bestClaimM2 ? formatLand(profile.bestClaimM2) : "–"],
+      ["TOP", "Best game", profile.bestGameM2 ? formatLand(profile.bestGameM2) : "–"],
+      ["MI", "Longest run", profile.longestRunM ? formatMiles(profile.longestRunM) : "–"],
+      ["#", "Best finish", profile.bestRank ? `#${profile.bestRank}` : "–"],
+      ["CUT", "Most cuts in a game", profile.mostCuts ? String(profile.mostCuts) : "–"],
+    ];
+    $("pr-list").innerHTML = prs
+      .map(([b, l, v]) => `<div class="pr-row"><span class="pr-badge">${b}</span><span class="pr-label">${l}</span><strong>${v}</strong></div>`)
+      .join("");
+
+    // All-time.
+    const stats: [string, string][] = [
+      ["Distance", formatMiles(profile.totalDistanceM)],
+      ["Land claimed", formatLand(profile.allTimeScoreM2)],
+      ["Games", String(profile.gamesPlayed)],
+      ["Wins", String(profile.wins)],
+      ["Time moving", formatMs(profile.totalPlayMs)],
+      ["Avg pace", formatPace(profile.totalPlayMs, profile.totalDistanceM)],
+      ["Cuts / deaths", `${profile.totalCuts} / ${profile.totalDeaths}`],
+      ["Land stolen", formatLand(profile.totalStolenM2)],
+    ];
+    $("stats").innerHTML = stats
+      .map(([l, v]) => `<div class="tile"><span class="tile-label">${l}</span><strong>${v}</strong></div>`)
+      .join("");
+
+    // Recent games.
+    $("activity-list").innerHTML = h.length
+      ? h
+          .slice(0, 10)
+          .map((r) => {
+            const when = new Date(r.atMs).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" });
+            const title = r.kind === "event" ? (r.label ?? "Community event") : r.won ? "Won a game" : "Game";
+            return `<li class="activity">
+              <div class="activity-head"><strong>${title}</strong><span>${when}</span></div>
+              <div class="activity-figs">
+                <div><strong>${formatLand(r.areaM2)}</strong><span>Land</span></div>
+                <div><strong>${formatMiles(r.distanceM)}</strong><span>Distance</span></div>
+                <div><strong>${formatMs(r.durationMs)}</strong><span>Time</span></div>
+                <div><strong>${r.rank ? `#${r.rank}/${r.players}` : "–"}</strong><span>Rank</span></div>
+              </div>
+            </li>`;
+          })
+          .join("")
+      : `<li class="empty">No games yet</li>`;
+  }
+
   function paintUi(force = false) {
     const now = performance.now();
     if (!force && now - lastUiPaint < 200) return;
@@ -760,16 +982,9 @@ async function main() {
       if (inGame) {
         const g = snap();
         const left =
-          phase === "lobby"
-            ? "In the lobby"
-            : phase === "results"
-              ? "Game over"
-              : g
-                ? `${inEvent() ? hudCountdown(g.remainingMs) : formatMs(g.remainingMs)} left`
-                : "";
-        $("return-sub").textContent = left ? `${left} · Tap to return` : "Tap to return";
+          phase === "playing" && g ? formatMs(g.remainingMs) : "";
+        $("return-sub").textContent = left;
       }
-      $("home-mode").textContent = "";
     }
 
     if (screen === "create") {
@@ -812,20 +1027,34 @@ async function main() {
           : "Waiting for the host to start…";
     }
 
+    if (screen === "events") {
+      $("events-list").innerHTML = COMMUNITY_EVENTS.map((e) => {
+        const live = eventSummaries.get(e.id);
+        const mins = live ? Math.max(1, Math.ceil((live.endsAtMs - live.nowMs) / 60_000)) : 0;
+        const left = live ? `${mins} min left · ${live.players} playing` : "1-hour event";
+        const active = session?.kind === "event" && session.event.id === e.id ? " · You're here" : "";
+        return `<button class="place" type="button" data-event="${e.id}">
+          <span class="place-name">${escapeHtml(e.name)}</span>
+          <span class="place-sub">${escapeHtml(e.place)} · ${left}${active}</span>
+        </button>`;
+      }).join("");
+    }
+
     if (screen === "event") {
+      if (session?.kind === "event") $("event-name").textContent = session.event.name;
       const ranked = s ? [...s.seats].sort((a, b) => b.areaM2 - a.areaM2) : [];
       const you = s?.you ?? null;
       const rank = you && you.areaM2 > 0 ? ranked.findIndex((x) => x.id === you.id) + 1 : 0;
       $("event-score").textContent = formatArea(phase === "playing" || (you?.areaM2 ?? 0) > 0 ? you?.areaM2 ?? 0 : 0);
       $("event-rank").textContent = rank ? `#${rank}` : "–";
-      $("event-timer").textContent = s ? formatCountdown(s.remainingMs) : "–";
+      $("event-timer").textContent = s ? formatMs(s.remainingMs) : "–";
       const winner = session?.kind === "event" && !session.sim ? live.lastWinner : null;
       $("event-winner").classList.toggle("hidden", !winner);
       if (winner) $("event-winner").innerHTML = `Last event winner: <strong>${escapeHtml(winner.name)}</strong> · ${formatArea(winner.areaM2)}`;
       const err = session?.kind === "event" && !session.sim ? live.serverError : null;
       $("event-alert").classList.toggle("hidden", !err);
       if (err) $("event-alert").textContent = err;
-      $("event-hint").textContent = `${s?.seats.length ?? 0} players in this week's event`;
+      $("event-hint").textContent = `${s?.seats.length ?? 0} playing now`;
     }
 
     if (screen === "game" && s) {
@@ -837,7 +1066,7 @@ async function main() {
           return `<li class="${x.id === me ? "me" : ""}"><span class="n">${i + 1}</span><span class="dot" style="background:${x.color}"></span><span class="nm">${escapeHtml(label(x, me))}</span><span class="pct">${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</span></li>`;
         })
         .join("");
-      $("hud-timer").textContent = inEvent() ? hudCountdown(s.remainingMs) : formatMs(s.remainingMs);
+      $("hud-timer").textContent = formatMs(s.remainingMs);
       $("btn-zoom").textContent = map.zoomMode === "arena" ? "Zoom in" : "Zoom out";
       const cd = phase === "countdown" ? Math.ceil((countdownEnd - now) / COUNTDOWN_STEP_MS) : 0;
       $("countdown").classList.toggle("hidden", cd <= 0);
@@ -846,15 +1075,28 @@ async function main() {
       const waitingFirstSpawn = session?.kind === "live" && phase === "playing" && !live.armed;
       $("spawn-gate").classList.toggle("hidden", !waitingFirstSpawn);
       const out = phase === "playing" && (mode === "ghost" || ((mode === "toPlant" || mode === "joining") && plantedOnce));
-      // While you're out the snackbar stays put with where to go.
+      // While you're out (dead, or outside the circle) the snackbar stays put with where to go.
+      // Live games never send fixes from outside the circle, so ask the GPS tracker directly.
+      const liveOutside = (session?.kind === "live" || (session?.kind === "event" && !session.sim)) && live.outside;
+      const outside = !out && phase === "playing" && (liveOutside || Date.now() - outsideAt < OUTSIDE_HOLD_MS);
       const el = $("snackbar");
       if (out && !deadShown) {
         deadShown = true;
+        outsideShown = false;
         window.clearTimeout(snackTimer);
         el.textContent = DEAD_TEXT;
         el.className = "snackbar dead";
       } else if (!out && deadShown) {
         deadShown = false;
+        el.className = "snackbar hidden";
+      }
+      if (outside && !outsideShown) {
+        outsideShown = true;
+        window.clearTimeout(snackTimer);
+        el.textContent = OUTSIDE_TEXT;
+        el.className = "snackbar warn";
+      } else if (!outside && outsideShown) {
+        outsideShown = false;
         el.className = "snackbar hidden";
       }
     }
@@ -872,6 +1114,8 @@ async function main() {
         $("results-hint").textContent = `Same lobby · ${ready}/${ranked.length} ready`;
       }
     }
+
+    if (screen === "stats") paintStats();
 
     if (screen === "settings") {
       const av = $("me-avatar");
@@ -894,19 +1138,7 @@ async function main() {
       });
       $("sim-speed").classList.toggle("hidden", !isSim());
       $("speed-value").textContent = `${profile.demoSpeed}×`;
-      const avg = profile.gamesPlayed ? profile.allTimeScoreM2 / profile.gamesPlayed : 0;
-      const stats: [string, string][] = [
-        ["All time score", formatArea(profile.allTimeScoreM2)],
-        ["Best rank", profile.bestRank ? `#${profile.bestRank}` : "–"],
-        ["Games", String(profile.gamesPlayed)],
-        ["Games won", String(profile.wins)],
-        ["Best game", formatArea(profile.bestGameM2)],
-        ["Avg per game", formatArea(avg)],
-        ["Time played", formatMs(profile.totalPlayMs)],
-      ];
-      $("stats").innerHTML = stats
-        .map(([l, v]) => `<div class="tile"><span class="tile-label">${l}</span><strong>${v}</strong></div>`)
-        .join("");
+
     }
   }
 
@@ -936,7 +1168,10 @@ async function main() {
         if (effects.length) onYourEffects(effects);
       }
       const s = m.snapshot();
-      if (phase === "playing") observe(s);
+      if (phase === "playing") {
+        observe(s);
+        trackRun(s);
+      }
       if (screen === "game") map.update(s, true);
       if (phase === "playing" && m.ended) endGame();
     } else if (session?.kind === "event" && session.sim) {
@@ -944,13 +1179,19 @@ async function main() {
       const effects = m.advance(dt, profile.demoSpeed);
       if (effects.length) onYourEffects(effects);
       const s = m.snapshot();
-      if (phase === "playing") observe(s);
+      if (phase === "playing") {
+        observe(s);
+        trackRun(s);
+      }
       if (screen === "game" || screen === "event") map.update(s, phase === "playing");
     } else if (session?.kind === "event" && live.version !== lastLiveVersion) {
       lastLiveVersion = live.version;
       const s = live.snapshot();
       if (s) {
-        if (phase === "playing") observe(s);
+        if (phase === "playing") {
+          observe(s);
+          trackRun(s);
+        }
         if (screen === "game" || screen === "event") {
           map.update(s, phase === "playing");
           if (phase === "playing") map.setOutsideTracks(live.outsideTracks);
@@ -967,7 +1208,10 @@ async function main() {
           enterLobby();
           beginCountdown();
         }
-        if (phase === "playing") observe(s);
+        if (phase === "playing") {
+          observe(s);
+          trackRun(s);
+        }
         if (screen === "game") {
           map.update(s, true);
           map.setOutsideTracks(live.outsideTracks);

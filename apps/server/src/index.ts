@@ -21,7 +21,7 @@ import {
 } from "@paper-irl/rules";
 import { authConfigured, identify } from "./auth.js";
 import { fillBots, startBotLoop, stopBotLoop } from "./bots.js";
-import { EventManager } from "./event.js";
+import { EVENTS, EventManager } from "./event.js";
 
 /**
  * Minimal HTTP API for local demos.
@@ -100,7 +100,8 @@ async function maybeInitDb() {
 
 async function main() {
   const db = await maybeInitDb();
-  const event = await EventManager.load(db);
+  const events = new Map<string, EventManager>();
+  for (const cfg of EVENTS) events.set(cfg.id, await EventManager.load(cfg, db));
   const app = Fastify({ logger: true });
 
   app.addHook("onRequest", async (req, reply) => {
@@ -151,7 +152,8 @@ async function main() {
         : defaultArena.centerLon;
     const playArena = buildArena({ radiusM, centerLat, centerLon });
     const lobby = createLobby(c, playArena, {
-      durationMs: req.body?.durationMs ?? 15 * 60 * 1000,
+      // Games run at most an hour.
+      durationMs: Math.min(60 * 60 * 1000, Math.max(60 * 1000, Number(req.body?.durationMs) || 15 * 60 * 1000)),
       maxSeats,
       speedScale: typeof req.body?.speedScale === "number" ? req.body.speedScale : 1,
     });
@@ -347,41 +349,57 @@ async function main() {
     },
   );
 
-  /** Public 7-day event: live map state for everyone (seat id when identified). */
-  app.get("/event", async (req) => {
-    const who = await identify(req);
-    return { ...event.payload(event.seatFor(who?.key ?? null)), authConfigured };
-  });
+  /** Community events: list, live state, join, fix, results. `/event/*` = Keller Hall. */
+  app.get("/events", async () => ({ events: [...events.values()].map((e) => e.summary()) }));
 
-  app.get("/event/results", async () => ({ results: event.recentResults() }));
+  const eventRoutes = (base: string, pick: (id?: string) => EventManager | undefined) => {
+    app.get<{ Params: { id?: string } }>(base, async (req, reply) => {
+      const event = pick(req.params.id);
+      if (!event) return reply.code(404).send({ error: "no_event" });
+      const who = await identify(req);
+      return { ...event.payload(event.seatFor(who?.key ?? null)), authConfigured };
+    });
 
-  app.post<{ Body: { name?: string } }>("/event/join", async (req, reply) => {
-    const who = await identify(req);
-    if (!who) return reply.code(401).send({ error: "unauthenticated" });
-    try {
-      const seatId = event.join(who.key, req.body?.name ?? "Player");
-      return event.payload(seatId);
-    } catch (e) {
-      return reply.code(400).send({ error: String(e) });
-    }
-  });
+    app.get<{ Params: { id?: string } }>(`${base}/results`, async (req, reply) => {
+      const event = pick(req.params.id);
+      if (!event) return reply.code(404).send({ error: "no_event" });
+      return { results: event.recentResults() };
+    });
 
-  app.post<{ Body: { fix: Fix } }>("/event/fix", async (req, reply) => {
-    const who = await identify(req);
-    if (!who) return reply.code(401).send({ error: "unauthenticated" });
-    const seatId = event.seatFor(who.key);
-    if (seatId === null) return reply.code(409).send({ error: "not_joined" });
-    const fix = req.body?.fix;
-    if (!fix || typeof fix.lat !== "number" || typeof fix.lon !== "number") {
-      return reply.code(400).send({ error: "bad_fix" });
-    }
-    const { outside, effects } = event.fix(seatId, fix);
-    return { outside, effects, ...event.payload(seatId) };
-  });
+    app.post<{ Params: { id?: string }; Body: { name?: string } }>(`${base}/join`, async (req, reply) => {
+      const event = pick(req.params.id);
+      if (!event) return reply.code(404).send({ error: "no_event" });
+      const who = await identify(req);
+      if (!who) return reply.code(401).send({ error: "unauthenticated" });
+      try {
+        const seatId = event.join(who.key, req.body?.name ?? "Player");
+        return event.payload(seatId);
+      } catch (e) {
+        return reply.code(400).send({ error: String(e) });
+      }
+    });
+
+    app.post<{ Params: { id?: string }; Body: { fix: Fix } }>(`${base}/fix`, async (req, reply) => {
+      const event = pick(req.params.id);
+      if (!event) return reply.code(404).send({ error: "no_event" });
+      const who = await identify(req);
+      if (!who) return reply.code(401).send({ error: "unauthenticated" });
+      const seatId = event.seatFor(who.key);
+      if (seatId === null) return reply.code(409).send({ error: "not_joined" });
+      const fix = req.body?.fix;
+      if (!fix || typeof fix.lat !== "number" || typeof fix.lon !== "number") {
+        return reply.code(400).send({ error: "bad_fix" });
+      }
+      const { outside, effects } = event.fix(seatId, fix);
+      return { outside, effects, ...event.payload(seatId) };
+    });
+  };
+  eventRoutes("/events/:id", (id) => (id ? events.get(id) : undefined));
+  eventRoutes("/event", () => events.get("keller"));
 
   app.addHook("onClose", async () => {
     for (const c of lobbies.keys()) stopBotLoop(c);
-    await event.stop();
+    for (const e of events.values()) await e.stop();
   });
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.once(sig, () => void app.close().then(() => process.exit(0)));
