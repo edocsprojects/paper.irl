@@ -7,5 +7,8 @@ dist/
 .DS_Store
 coverage/
 .turbo/
+.expo/
+**/.verify-export/
+**/.verify-export-from-root/
 data/*.bin
 !data/keller/.gitkeep

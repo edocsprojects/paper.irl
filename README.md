@@ -5,7 +5,7 @@ IRL [paper.io](https://paper.io)-style territory game. **MVP is freeplay GPS** i
 ## Monorepo
 
 ```
-apps/mobile    Expo Android client (human / join-bots / host-bots)
+apps/mobile    Expo Android + iOS client (human / join-bots / host-bots)
 apps/web       Street-map freeplay demo — 8 bots wander the Keller circle
 apps/server    HTTP API + bot loop (optional Postgres)
 apps/sim       8-bot mock GPS simulation (verification harness)
@@ -24,7 +24,7 @@ pnpm sim:lobby     # 8 mocked players wandering Keller circle
 pnpm dev:server    # API on :3001 (DATABASE_URL optional)
 ```
 
-### Android (Expo)
+### Android (Expo Go)
 
 ```bash
 pnpm dev:server                 # terminal 1
@@ -33,7 +33,24 @@ pnpm mobile:join-bots           # 7 bots + autopilot your seat
 pnpm mobile:host-bots           # create, fill 7 bots, start, autopilot you
 ```
 
-Emulator API URL defaults to `http://10.0.2.2:3001`. Full emulator + screen-record steps: [`apps/mobile/README.md`](apps/mobile/README.md).
+Android emulator API URL defaults to `http://10.0.2.2:3001`.
+
+### iOS / Xcode (Mac)
+
+```bash
+pnpm install
+pnpm --filter @paper-irl/rules build
+pnpm dev:server                 # terminal 1
+cd apps/mobile/ios && pod install && open paperirl.xcworkspace
+```
+
+In Xcode: pick an **iPhone Simulator** → **Run** (▶). Free **Personal Team** is enough for Simulator; paid Apple Developer ($99) only for TestFlight / broader device distribution.
+
+CLI: `pnpm mobile:ios` / `pnpm mobile:ios:join-bots` / `pnpm mobile:ios:host-bots` (same three modes; Simulator API default `http://127.0.0.1:3001`).
+
+Metro monorepo gate (required before Simulator): `pnpm verify:mobile` (also part of `pnpm test`). After switching branches / reinstalling, wipe stale Pods + DerivedData with `pnpm mobile:ios:clean`.
+
+Full Mac two-terminal steps: [`apps/mobile/README.md`](apps/mobile/README.md).
 
 No Google Maps key needed. Claims are freehand GPS polylines inside the lobby boundary; the basemap is a simple street map (OpenFreeMap). Camera follows Player 1 (“You”); tap anywhere on the Spawn overlay to plant / respawn while other bots keep wandering.
 

@@ -1,57 +1,111 @@
-# paper.irl — Android mobile (Expo)
+# paper.irl — mobile (Expo)
 
-React Native (Expo) client sharing `@paper-irl/rules`. Android-first. Street map via MapLibre in a WebView (OpenFreeMap — **no Google Maps key**).
+React Native (Expo) client sharing `@paper-irl/rules`. **Android** + **iOS** (native `ios/` for Xcode). Street map via MapLibre in a WebView (OpenFreeMap — **no Google Maps key**).
 
-## Launch modes (one app)
+## Launch modes (one app, both platforms)
 
-| Script | Mode | Behavior |
+| Root script | Mode | Behavior |
 |---|---|---|
-| `pnpm mobile` | `human` | Create/join lobby; real GPS when permitted; mock autopilot if GPS denied (emulator) |
-| `pnpm mobile:join-bots` | `join-bots` | Join (or create) a lobby with 7 bots; **your seat is auto-moved** like the sim |
-| `pnpm mobile:host-bots` | `host-bots` | Create lobby, fill 7 bots, start; your seat auto-moved for demo footage |
+| `pnpm mobile` / `pnpm mobile:ios` | `human` | Create/join lobby; real GPS when permitted; mock autopilot if GPS denied (simulator) |
+| `pnpm mobile:join-bots` / `pnpm mobile:ios:join-bots` | `join-bots` | Join (or create) a lobby with 7 bots; **your seat is auto-moved** like the sim |
+| `pnpm mobile:host-bots` / `pnpm mobile:ios:host-bots` | `host-bots` | Create lobby, fill 7 bots, start; your seat auto-moved for demo footage |
 
-Always start the API first:
+Always start the API first (`pnpm dev:server`).
 
-```bash
-pnpm --filter @paper-irl/rules build
-pnpm dev:server   # http://0.0.0.0:3001
+Default API URL (override with `EXPO_PUBLIC_API_URL`):
+
+| Client | URL |
+|---|---|
+| Android emulator | `http://10.0.2.2:3001` |
+| iOS Simulator | `http://127.0.0.1:3001` |
+| Physical device | `http://<your-lan-ip>:3001` |
+
+---
+
+## Metro monorepo (required reading)
+
+Expo’s Metro **server root is the monorepo root**. AppDelegate must use:
+
+```objc
+jsBundleURLForBundleRoot:@".expo/.virtual-metro-entry"
 ```
 
-Emulator reaches the host via `http://10.0.2.2:3001` (default `EXPO_PUBLIC_API_URL`). Physical device: set `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:3001`.
+Expo rewrites that to `apps/mobile/index` (from `"main": "index.js"`).  
+**Do not** use `@"index"` — Metro looks for `<repo>/index.js` and redboxes.
 
-## Android Studio emulator + demo footage
+Also: `.npmrc` `node-linker=hoisted`, `ios/.xcode.env` `ENTRY_FILE=index.js`, local `index.js` → `registerRootComponent(App)`.
 
-1. Install [Android Studio](https://developer.android.com/studio) → SDK + one Virtual Device (API 34+, Google APIs image is fine).
-2. Install Node 20+, enable pnpm (`corepack enable`).
-3. From repo root:
+### Linux gate (runs in cloud / `pnpm test`)
+
+```bash
+pnpm verify:mobile
+# or: pnpm --filter @paper-irl/mobile verify:bundle
+```
+
+Catches: `@babel/runtime`, `expo/AppEntry` `../../App`, bare `./index` from repo root, stale `.pnpm` symlinks / autolinking paths, and (on macOS) `Podfile.lock` / `Pods` still pointing at `node_modules/.pnpm`. HTTP-probes virtual-metro-entry, `/apps/mobile/index.bundle`, and bare `/index.bundle` with Metro launched exactly like `pnpm mobile:ios:host-bots` (repo root + `pnpm --filter`).
+
+`metro.config.js` also rewrites bare `/index.bundle` → `/apps/mobile/index.bundle`, so an old Simulator binary that still asks for `index` gets the app instead of the `./index` redbox.
+
+### Stale native build (xcodebuild 65 / `ExpoModulesCore` pcm / `.pnpm/expo-modules-core@…`)
+
+Pods + DerivedData built before `node-linker=hoisted` reference `node_modules/.pnpm/...` paths that no longer exist. The build fails, the **old** app stays on the Simulator, and it redboxes on `./index`. Fix:
+
+```bash
+pnpm mobile:ios:clean   # rm ios/Pods, Podfile.lock, ios/build, DerivedData/paperirl-*, uninstall irl.paper.demo
+```
+
+---
+
+## iOS / Xcode (Mac) — after `pnpm verify:mobile` is green
+
+Free Apple **Personal Team** is enough for **Simulator**. Paid **$99/yr** only for TestFlight / broader device distribution.
+
+### Terminal 1 — API
+
+```bash
+git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline
+rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/mobile/.expo apps/mobile/.verify-export apps/mobile/.verify-export-from-root
+pnpm install
+pnpm --filter @paper-irl/rules build
+pnpm mobile:ios:clean
+pnpm verify:mobile
+pnpm dev:server
+```
+
+### Terminal 2 — iOS
+
+```bash
+pnpm mobile:ios:host-bots
+```
+
+Or open Xcode after pods:
+
+```bash
+cd apps/mobile/ios && pod install && open paperirl.xcworkspace
+```
+
+Xcode → **paperirl** → iPhone Simulator → **Run** (rebuild so AppDelegate is current). If Xcode shows a pcm / `.pnpm` error, quit Xcode, run `pnpm mobile:ios:clean`, then `pod install` again.
+
+Freeplay mode is **not** on this branch — it lands separately (PR #5); mobile freeplay is the follow-up once iOS boot is green.
+
+---
+
+## Android Studio emulator
 
 ```bash
 pnpm install
 pnpm --filter @paper-irl/rules build
-pnpm dev:server
+pnpm dev:server          # terminal 1
+pnpm mobile:host-bots    # terminal 2
 ```
 
-4. In a second terminal, start Expo against the emulator:
-
-```bash
-pnpm mobile:host-bots
-```
-
-5. When Metro asks, press `a` (Android) or wait for the emulator to open the app.
-6. In-app: tap **Create & start** — bots fill + match starts; your seat autopilots.
-7. **Screen record for footage**
-   - Emulator: `⋯` menu → **Record and Playback** → Start recording → Stop → Save.
-   - Or CLI: `adb shell screenrecord /sdcard/paper.mp4` then `adb pull /sdcard/paper.mp4`.
-   - Or Android Studio’s emulator camera/record controls.
-
-### Human GPS on emulator
-
-Extended Controls (`⋯`) → **Location** → set a single point near Keller Hall (`44.97452, -93.23256`) or play a GPX route. Then use `pnpm mobile` and grant location.
+Same Metro stack as iOS — `pnpm verify:mobile` gates both. Browser escape hatch: `pnpm demo`.
 
 ## Project layout
 
 ```
-apps/mobile/          Expo app
+apps/mobile/          Expo app (TS) + index.js entry
+apps/mobile/ios/      Native Xcode project (open *.xcworkspace after pods)
 apps/server/          HTTP lobby + bot loop
 packages/rules/       Shared plant/trail/cut/wipe + wanderSeat
 ```
