@@ -1555,11 +1555,12 @@ select {
 .intro-brand {
   position: absolute;
   z-index: 3;
-  top: calc(1.1rem + env(safe-area-inset-top));
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 1.5rem;
+  /* Same spot and size as the Home header: top-left. */
+  top: calc(1rem + env(safe-area-inset-top));
+  left: 1rem;
+  right: 1rem;
+  text-align: left;
+  font-size: 1.6rem;
   font-weight: 800;
   letter-spacing: -0.03em;
   color: var(--ink);
