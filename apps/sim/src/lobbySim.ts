@@ -1,25 +1,29 @@
 /**
- * 8-bot mock lobby on the Keller Hall fixture graph.
- * Synthetic GPS walks — plant, trail, bank, cut, wipe, respawn.
+ * 8-bot mock lobby — freeplay GPS inside the Keller Hall 500 m circle.
+ * Synthetic random walks — plant, trail, bank, cut, wipe, respawn.
  * Exit 0 only if all invariants hold.
  */
 import {
   applyFix,
-  buildKellerFixtureGraph,
+  buildKellerArena,
+  clampToArena,
   createLobby,
+  fromLocalM,
   joinLobby,
   seatPublicView,
   startLobby,
   tickLobby,
+  toLocalM,
   topScores,
+  type LatLon,
   type LobbyState,
   type Seat,
 } from "@paper-irl/rules";
 
 const SEED = 42;
 const BOTS = 8;
-const TICKS = 900; // ~15 min at 1s if duration matched; we use shorter duration for CI
-const DURATION_MS = 60_000; // 1 min compressed sim window for CI speed
+const TICKS = 900;
+const DURATION_MS = 60_000;
 
 function mulberry32(a: number) {
   return function () {
@@ -34,50 +38,83 @@ function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`SIM_FAIL: ${msg}`);
 }
 
+const headings = new Map<number, number>();
+
 function botStep(
   state: LobbyState,
   seat: Seat,
   rand: () => number,
   now: number,
 ) {
-  const graph = state.graph;
-  let nodeId = seat.headNode ?? seat.respawnNode ?? 0;
-  if (seat.mode === "toPlant" && seat.respawnNode !== null) {
-    nodeId = seat.respawnNode;
-  } else if (seat.mode === "safe" && rand() < 0.55) {
-    // Hunt: step toward another player's open trail tip.
-    const prey = [...state.seats.values()].find(
-      (s) => s.id !== seat.id && s.mode === "trailing" && s.headEdge !== null,
-    );
-    if (prey?.headEdge != null) {
-      const e = graph.edges[prey.headEdge]!;
-      nodeId = rand() < 0.5 ? e.a : e.b;
-    } else {
-      const edges = graph.nodeEdges.get(nodeId) ?? [];
-      if (edges.length) {
-        const e = graph.edges[edges[Math.floor(rand() * edges.length)]!]!;
-        nodeId = e.a === nodeId ? e.b : e.a;
-      }
-    }
+  const arena = state.arena;
+  let pos: LatLon =
+    seat.position ??
+    seat.respawnAt ??
+    fromLocalM(arena.centerLat, arena.centerLon, 0, 0);
+
+  if (seat.mode === "toPlant" && seat.respawnAt !== null) {
+    pos = { ...seat.respawnAt };
   } else {
-    const edges = graph.nodeEdges.get(nodeId) ?? [];
-    if (edges.length && rand() > 0.1) {
-      const e = graph.edges[edges[Math.floor(rand() * edges.length)]!]!;
-      nodeId = e.a === nodeId ? e.b : e.a;
+    let heading = headings.get(seat.id) ?? rand() * Math.PI * 2;
+    if (seat.mode === "safe" && rand() < 0.45) {
+      const prey = [...state.seats.values()].find(
+        (s) =>
+          s.id !== seat.id &&
+          s.mode === "trailing" &&
+          s.trail.length >= 2,
+      );
+      if (prey) {
+        const tip = prey.trail[prey.trail.length - 1]!;
+        const local = toLocalM(pos.lat, pos.lon, tip.lat, tip.lon);
+        heading = Math.atan2(local.y, local.x);
+      } else {
+        heading += (rand() - 0.5) * 1.2;
+      }
+    } else if (seat.mode === "trailing" && seat.owned[0]) {
+      // Bias home to bank loops
+      if (rand() < 0.35) {
+        const home = seat.owned[0]![0]!;
+        const local = toLocalM(pos.lat, pos.lon, home.lat, home.lon);
+        heading = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.8;
+      } else {
+        heading += (rand() - 0.5) * 0.9;
+      }
     } else {
-      nodeId = graph.nodes[Math.floor(rand() * graph.nodes.length)]!.id;
+      heading += (rand() - 0.5) * 1.1;
     }
+
+    const stepM = 4 + rand() * 6;
+    let next = fromLocalM(
+      pos.lat,
+      pos.lon,
+      Math.cos(heading) * stepM,
+      Math.sin(heading) * stepM,
+    );
+    next = clampToArena(arena, next);
+    // Reflect if we got clamped hard
+    const before = toLocalM(arena.centerLat, arena.centerLon, pos.lat, pos.lon);
+    const after = toLocalM(arena.centerLat, arena.centerLon, next.lat, next.lon);
+    if (Math.hypot(after.x, after.y) > arena.radiusM * 0.96) {
+      heading += Math.PI * (0.6 + rand() * 0.5);
+    }
+    void before;
+    headings.set(seat.id, heading);
+    pos = next;
   }
-  const n = graph.nodes[nodeId]!;
-  const fix = {
-    lat: n.lat + (rand() - 0.5) * 0.00002,
-    lon: n.lon + (rand() - 0.5) * 0.00002,
-    accuracyM: 5 + rand() * 4,
-    speedMps: 1 + rand() * 3,
-    clientTsMs: now,
-    mock: true,
-  };
-  applyFix(state, seat.id, fix, now);
+
+  applyFix(
+    state,
+    seat.id,
+    {
+      lat: pos.lat + (rand() - 0.5) * 0.00001,
+      lon: pos.lon + (rand() - 0.5) * 0.00001,
+      accuracyM: 5 + rand() * 4,
+      speedMps: 1 + rand() * 3,
+      clientTsMs: now,
+      mock: true,
+    },
+    now,
+  );
 }
 
 function checkInvariants(state: LobbyState, label: string) {
@@ -85,7 +122,7 @@ function checkInvariants(state: LobbyState, label: string) {
   for (const seat of state.seats.values()) {
     if (seat.mode === "toPlant" || seat.mode === "ghost") {
       assert(
-        seat.ownedEdges.size === 0,
+        seat.owned.length === 0,
         `${label}: ${seat.nickname} ghost/toPlant still owns land`,
       );
       assert(
@@ -95,27 +132,29 @@ function checkInvariants(state: LobbyState, label: string) {
     }
     if (seat.mode === "toPlant") {
       assert(
-        seat.respawnNode !== null,
+        seat.respawnAt !== null,
         `${label}: ${seat.nickname} toPlant without marker`,
       );
     }
-    for (const e of seat.ownedEdges) {
+    if (seat.position) {
+      const local = toLocalM(
+        state.arena.centerLat,
+        state.arena.centerLon,
+        seat.position.lat,
+        seat.position.lon,
+      );
       assert(
-        state.edgeOwner.get(e) === seat.id,
-        `${label}: edge owner mismatch for ${seat.nickname}`,
+        Math.hypot(local.x, local.y) <= state.arena.radiusM + 2,
+        `${label}: ${seat.nickname} outside arena`,
       );
     }
-  }
-  // edgeOwner only points at existing seats
-  for (const [e, sid] of state.edgeOwner) {
-    assert(state.seats.has(sid), `${label}: dangling edge owner on ${e}`);
   }
 }
 
 function main() {
   const rand = mulberry32(SEED);
-  const graph = buildKellerFixtureGraph(90);
-  const lobby = createLobby("SIM8", graph, {
+  const arena = buildKellerArena();
+  const lobby = createLobby("SIM8", arena, {
     durationMs: DURATION_MS,
     maxSeats: BOTS,
   });
@@ -138,36 +177,38 @@ function main() {
     for (const seat of lobby.seats.values()) {
       const beforeMode = seat.mode;
       const beforeTrail = seat.trail.length;
-      const beforeOwned = seat.ownedEdges.size;
+      const beforeOwned = seat.owned.length;
       botStep(lobby, seat, rand, simNow);
       if (beforeMode === "toPlant" && seat.mode === "safe") plants++;
       if (seat.mode === "safe" && beforeTrail > 0 && seat.trail.length === 0) {
         banks++;
       }
-      if (beforeOwned > 0 && seat.ownedEdges.size === 0 && seat.mode === "toPlant") {
+      if (
+        beforeOwned > 0 &&
+        seat.owned.length === 0 &&
+        seat.mode === "toPlant"
+      ) {
         cuts++;
       }
     }
 
-    // Guaranteed hunt attempts: teleport a safe bot onto a trailing bot's trail tip.
+    // Guaranteed hunt: teleport a safe bot onto a trailing bot's trail tip
     if (tick % 5 === 0) {
       const prey = [...lobby.seats.values()].find(
-        (s) => s.mode === "trailing" && (s.trail.length > 0 || s.headEdge !== null),
+        (s) => s.mode === "trailing" && s.trail.length >= 2,
       );
       const hunter = [...lobby.seats.values()].find(
         (s) => s.mode === "safe" && prey && s.id !== prey.id,
       );
       if (prey && hunter) {
-        const edgeId = prey.headEdge ?? prey.trail[prey.trail.length - 1]!;
-        const e = lobby.graph.edges[edgeId]!;
-        const n = lobby.graph.nodes[e.a]!;
-        const beforeOwned = prey.ownedEdges.size;
+        const tip = prey.trail[Math.floor(prey.trail.length / 2)]!;
+        const beforeOwned = prey.owned.length;
         applyFix(
           lobby,
           hunter.id,
           {
-            lat: n.lat,
-            lon: n.lon,
+            lat: tip.lat,
+            lon: tip.lon,
             accuracyM: 5,
             speedMps: 2,
             clientTsMs: simNow,
@@ -175,7 +216,11 @@ function main() {
           },
           simNow,
         );
-        if (beforeOwned > 0 && prey.ownedEdges.size === 0 && prey.mode === "toPlant") {
+        if (
+          beforeOwned > 0 &&
+          prey.owned.length === 0 &&
+          prey.mode === "toPlant"
+        ) {
           cuts++;
         }
       }
@@ -186,7 +231,6 @@ function main() {
     if (lobby.phase === "ended") break;
   }
 
-  // Force end
   tickLobby(lobby, t0 + DURATION_MS + 1000);
   assert(lobby.phase === "ended", "lobby should have ended");
   checkInvariants(lobby, "ended");
@@ -198,7 +242,6 @@ function main() {
   assert(cuts >= 1, "expected at least one wipe from trail cuts");
   assert(banks >= 1, "expected at least one bank");
 
-  // Late join forbidden after end
   let lateJoinBlocked = false;
   try {
     joinLobby(lobby, "Late");
@@ -211,9 +254,9 @@ function main() {
     JSON.stringify(
       {
         ok: true,
-        graph: graph.id,
-        nodes: graph.nodes.length,
-        edges: graph.edges.length,
+        mode: "freeplay",
+        arena: arena.id,
+        radiusM: arena.radiusM,
         plants,
         banks,
         cuts,

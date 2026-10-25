@@ -1,12 +1,24 @@
-import { haversineM } from "./geo.js";
+import {
+  circleRing,
+  clampToArena,
+  distanceToArenaCenterM,
+  distanceToPolylineM,
+  distanceToRingEdgeM,
+  fromLocalM,
+  haversineM,
+  isInsideArena,
+  pointInRing,
+  polylineLengthM,
+  ringAreaM2,
+  ringCentroid,
+  toLocalM,
+} from "./geo.js";
 import type {
-  EdgeId,
+  Arena,
   Effect,
-  FaceId,
   Fix,
-  LobbyGraph,
+  LatLon,
   LobbyState,
-  NodeId,
   Seat,
   SeatId,
 } from "./types.js";
@@ -24,7 +36,7 @@ const COLORS = [
 
 export function createLobby(
   code: string,
-  graph: LobbyGraph,
+  arena: Arena,
   opts?: { durationMs?: number; maxSeats?: number },
 ): LobbyState {
   return {
@@ -33,16 +45,16 @@ export function createLobby(
     durationMs: opts?.durationMs ?? 15 * 60 * 1000,
     startedAtMs: null,
     endsAtMs: null,
-    graph,
-    edgeOwner: new Map(),
-    faceOwner: new Map(),
+    arena,
     seats: new Map(),
     nextSeatId: 1,
-    cutOverlapM: 15,
+    cutProximityM: 15,
     plantDwellMs: 2000,
     plantRadiusM: 20,
-    pathWidthM: graph.pathWidthM,
+    pathWidthM: arena.pathWidthM,
     maxSeats: opts?.maxSeats ?? 8,
+    trailSampleM: 4,
+    boundaryMode: "clamp",
   };
 }
 
@@ -69,12 +81,10 @@ export function joinLobby(
     nickname: name,
     mode: "joining",
     color: COLORS[(id - 1) % COLORS.length]!,
-    ownedEdges: new Set(),
-    ownedFaces: new Set(),
+    owned: [],
     trail: [],
-    headEdge: null,
-    headNode: null,
-    respawnNode: null,
+    position: null,
+    respawnAt: null,
     areaM2: 0,
     ghostUntilMs: null,
   };
@@ -90,10 +100,10 @@ export function startLobby(state: LobbyState, nowMs: number): Effect[] {
   state.endsAtMs = nowMs + state.durationMs;
   const effects: Effect[] = [{ kind: "phase", phase: "live" }];
   for (const seat of state.seats.values()) {
-    const node = pickNearestSafeNode(state, null, randomSeed(seat.id));
-    seat.respawnNode = node;
+    const at = pickNearestSafePoint(state, null, randomSeed(seat.id));
+    seat.respawnAt = at;
     seat.mode = "toPlant";
-    effects.push({ kind: "respawnAssigned", seatId: seat.id, nodeId: node });
+    effects.push({ kind: "respawnAssigned", seatId: seat.id, at });
   }
   return effects;
 }
@@ -102,7 +112,6 @@ export function endLobby(state: LobbyState): Effect[] {
   state.phase = "ended";
   for (const seat of state.seats.values()) {
     seat.trail = [];
-    seat.headEdge = null;
     if (seat.mode === "trailing") seat.mode = "safe";
   }
   return [{ kind: "phase", phase: "ended" }];
@@ -118,163 +127,178 @@ function randomSeed(n: number) {
   return (n * 1103515245 + 12345) >>> 0;
 }
 
-function recomputeArea(state: LobbyState, seat: Seat) {
+function mulberry(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function recomputeArea(seat: Seat, pathWidthM: number) {
   let area = 0;
-  for (const e of seat.ownedEdges) {
-    area += state.graph.edges[e]!.areaM2;
+  for (const ring of seat.owned) {
+    area += ringAreaM2(ring);
   }
-  for (const f of seat.ownedFaces) {
-    area += state.graph.faces[f]!.areaM2;
-  }
+  // Open trail does not score until banked.
+  void pathWidthM;
   seat.areaM2 = area;
 }
 
-function edgeOther(edge: { a: NodeId; b: NodeId }, node: NodeId): NodeId {
-  return edge.a === node ? edge.b : edge.a;
-}
-
-function isSafeNode(state: LobbyState, nodeId: NodeId, exceptSeat: SeatId | null): boolean {
-  for (const eId of state.graph.nodeEdges.get(nodeId) ?? []) {
-    const owner = state.edgeOwner.get(eId);
-    if (owner !== undefined && owner !== exceptSeat) return false;
-    for (const s of state.seats.values()) {
-      if (exceptSeat !== null && s.id === exceptSeat) continue;
-      if (s.mode === "trailing" && (s.trail.includes(eId) || s.headEdge === eId)) {
-        return false;
-      }
-    }
+function pointInOwned(seat: Seat, p: LatLon, edgeSlackM = 3): boolean {
+  for (const ring of seat.owned) {
+    if (pointInRing(p, ring)) return true;
+    if (distanceToRingEdgeM(p, ring) <= edgeSlackM) return true;
   }
-  return true;
+  return false;
 }
 
-export function pickNearestSafeNode(
+function isPointContested(
   state: LobbyState,
-  fromNode: NodeId | null,
+  p: LatLon,
+  exceptSeat: SeatId | null,
+): boolean {
+  for (const s of state.seats.values()) {
+    if (exceptSeat !== null && s.id === exceptSeat) continue;
+    if (pointInOwned(s, p, 2)) return true;
+    if (s.mode === "trailing" && s.trail.length >= 2) {
+      if (distanceToPolylineM(p, s.trail) <= state.cutProximityM) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Nearest safe freeplay spawn inside the arena (neutral, clear of trails).
+ */
+export function pickNearestSafePoint(
+  state: LobbyState,
+  from: LatLon | null,
   seed = 1,
-): NodeId {
-  const nodes = state.graph.nodes;
+): LatLon {
+  const arena = state.arena;
+  const rand = mulberry(seed);
   const origin =
-    fromNode !== null
-      ? nodes[fromNode]!
-      : nodes[seed % nodes.length]!;
-  const ranked = [...nodes].sort((a, b) => {
-    const da = haversineM(origin.lat, origin.lon, a.lat, a.lon);
-    const db = haversineM(origin.lat, origin.lon, b.lat, b.lon);
-    return da - db;
-  });
-  for (const n of ranked) {
-    if (isSafeNode(state, n.id, null)) return n.id;
-  }
-  return ranked[0]!.id;
-}
+    from ??
+    fromLocalM(
+      arena.centerLat,
+      arena.centerLon,
+      (rand() - 0.5) * arena.radiusM * 0.6,
+      (rand() - 0.5) * arena.radiusM * 0.6,
+    );
 
-function snapFix(
-  graph: LobbyGraph,
-  fix: Fix,
-): { edgeId: EdgeId; nodeId: NodeId; distM: number } | null {
-  // Nearest node, then best incident edge (scales to OSM-sized graphs).
-  let bestNode: { nodeId: NodeId; distM: number } | null = null;
-  for (const n of graph.nodes) {
-    const dist = haversineM(fix.lat, fix.lon, n.lat, n.lon);
-    if (!bestNode || dist < bestNode.distM) {
-      bestNode = { nodeId: n.id, distM: dist };
+  const candidates: LatLon[] = [origin];
+  // Spiral + random samples across the circle
+  for (let i = 0; i < 48; i++) {
+    const ang = rand() * Math.PI * 2;
+    const r = Math.sqrt(rand()) * arena.radiusM * 0.92;
+    candidates.push(
+      fromLocalM(arena.centerLat, arena.centerLon, Math.cos(ang) * r, Math.sin(ang) * r),
+    );
+  }
+  for (let ring = 1; ring <= 12; ring++) {
+    const rad = ring * 35;
+    for (let k = 0; k < 8; k++) {
+      const ang = (k / 8) * Math.PI * 2 + seed * 0.01;
+      const local = toLocalM(arena.centerLat, arena.centerLon, origin.lat, origin.lon);
+      candidates.push(
+        fromLocalM(
+          arena.centerLat,
+          arena.centerLon,
+          local.x + Math.cos(ang) * rad,
+          local.y + Math.sin(ang) * rad,
+        ),
+      );
     }
   }
-  if (!bestNode || bestNode.distM > 45) return null;
-  const incident = graph.nodeEdges.get(bestNode.nodeId) ?? [];
-  if (!incident.length) return null;
-  let bestEdge = incident[0]!;
-  let bestEdgeDist = Infinity;
-  for (const eId of incident) {
-    const e = graph.edges[eId]!;
-    const otherId = e.a === bestNode.nodeId ? e.b : e.a;
-    const other = graph.nodes[otherId]!;
-    const d = haversineM(fix.lat, fix.lon, other.lat, other.lon);
-    if (d < bestEdgeDist) {
-      bestEdgeDist = d;
-      bestEdge = eId;
-    }
+
+  const ranked = candidates
+    .filter((p) => isInsideArena(arena, p, -8))
+    .sort(
+      (a, b) =>
+        haversineM(origin.lat, origin.lon, a.lat, a.lon) -
+        haversineM(origin.lat, origin.lon, b.lat, b.lon),
+    );
+
+  for (const p of ranked) {
+    if (!isPointContested(state, p, null)) return p;
   }
-  return { edgeId: bestEdge, nodeId: bestNode.nodeId, distM: bestNode.distM };
+  // Last resort: any in-bounds point
+  return ranked[0] ?? clampToArena(arena, origin);
 }
 
-function grantStarter(state: LobbyState, seat: Seat, atNode: NodeId): EdgeId[] {
-  const granted: EdgeId[] = [];
-  const incident = state.graph.nodeEdges.get(atNode) ?? [];
-  for (const eId of incident) {
-    if (state.edgeOwner.has(eId)) continue;
-    state.edgeOwner.set(eId, seat.id);
-    seat.ownedEdges.add(eId);
-    granted.push(eId);
-  }
-  // One more hop of neutrals if tiny.
-  if (granted.length < 2) {
-    for (const eId of [...granted]) {
-      const e = state.graph.edges[eId]!;
-      for (const n of [e.a, e.b]) {
-        for (const e2 of state.graph.nodeEdges.get(n) ?? []) {
-          if (state.edgeOwner.has(e2)) continue;
-          state.edgeOwner.set(e2, seat.id);
-          seat.ownedEdges.add(e2);
-          granted.push(e2);
-        }
+function grantStarter(state: LobbyState, seat: Seat, at: LatLon): LatLon[] {
+  const ring = circleRing(at, state.arena.starterRadiusM, 16);
+  seat.owned = [ring];
+  recomputeArea(seat, state.pathWidthM);
+  return ring;
+}
+
+function stealOverlapping(state: LobbyState, claimant: Seat, newRing: LatLon[]) {
+  for (const other of state.seats.values()) {
+    if (other.id === claimant.id) continue;
+    const kept: LatLon[][] = [];
+    let changed = false;
+    for (const ring of other.owned) {
+      const c = ringCentroid(ring);
+      if (pointInRing(c, newRing)) {
+        changed = true;
+        continue;
       }
+      kept.push(ring);
+    }
+    if (changed) {
+      other.owned = kept;
+      recomputeArea(other, state.pathWidthM);
     }
   }
-  recomputeArea(state, seat);
-  maybeEncloseFaces(state, seat);
-  return granted;
 }
 
-function maybeEncloseFaces(state: LobbyState, seat: Seat) {
-  for (const face of state.graph.faces) {
-    if (face.edgeIds.every((e) => seat.ownedEdges.has(e))) {
-      const prev = state.faceOwner.get(face.id);
-      if (prev !== undefined && prev !== seat.id) {
-        const other = state.seats.get(prev);
-        other?.ownedFaces.delete(face.id);
-        if (other) recomputeArea(state, other);
-      }
-      state.faceOwner.set(face.id, seat.id);
-      seat.ownedFaces.add(face.id);
-    }
-  }
-  recomputeArea(state, seat);
-}
-
-function wipeSeat(state: LobbyState, victim: Seat, byId: SeatId, nowMs: number): Effect[] {
+function wipeSeat(
+  state: LobbyState,
+  victim: Seat,
+  byId: SeatId,
+  nowMs: number,
+): Effect[] {
+  const near = victim.position;
   const effects: Effect[] = [{ kind: "cut", victimId: victim.id, byId }];
-  for (const e of victim.ownedEdges) {
-    state.edgeOwner.delete(e);
-  }
-  for (const f of victim.ownedFaces) {
-    state.faceOwner.delete(f);
-  }
-  victim.ownedEdges.clear();
-  victim.ownedFaces.clear();
+  victim.owned = [];
   victim.trail = [];
-  victim.headEdge = null;
-  victim.headNode = null;
   victim.areaM2 = 0;
   victim.mode = "ghost";
   victim.ghostUntilMs = nowMs + 3000;
-  const node = pickNearestSafeNode(state, victim.headNode, victim.id * 17);
-  victim.respawnNode = node;
+  const at = pickNearestSafePoint(state, near, victim.id * 17);
+  victim.respawnAt = at;
   victim.mode = "toPlant";
-  effects.push({ kind: "respawnAssigned", seatId: victim.id, nodeId: node });
+  effects.push({ kind: "respawnAssigned", seatId: victim.id, at });
   return effects;
 }
 
 function ensureRespawnSafe(state: LobbyState, seat: Seat): Effect[] {
-  if (seat.respawnNode === null) return [];
-  if (isSafeNode(state, seat.respawnNode, seat.id)) return [];
-  const node = pickNearestSafeNode(state, seat.respawnNode, seat.id * 31);
-  seat.respawnNode = node;
-  return [{ kind: "respawnMoved", seatId: seat.id, nodeId: node }];
+  if (seat.respawnAt === null) return [];
+  if (!isPointContested(state, seat.respawnAt, seat.id)) return [];
+  const at = pickNearestSafePoint(state, seat.respawnAt, seat.id * 31);
+  seat.respawnAt = at;
+  return [{ kind: "respawnMoved", seatId: seat.id, at }];
+}
+
+function appendTrail(state: LobbyState, seat: Seat, p: LatLon): Effect | null {
+  const last = seat.trail[seat.trail.length - 1];
+  if (last) {
+    const d = haversineM(last.lat, last.lon, p.lat, p.lon);
+    if (d < state.trailSampleM) {
+      // Still move the tip for cut detection feel
+      seat.trail[seat.trail.length - 1] = p;
+      return null;
+    }
+  }
+  seat.trail.push(p);
+  return { kind: "trailExtend", seatId: seat.id, point: p };
 }
 
 /**
- * Apply one GPS fix for a seat. Server authority entry point.
+ * Apply one GPS fix for a seat. Server authority entry point (freeplay).
  */
 export function applyFix(
   state: LobbyState,
@@ -305,26 +329,26 @@ export function applyFix(
 
   effects.push(...ensureRespawnSafe(state, seat));
 
-  const snap = snapFix(state.graph, fix);
-  if (!snap) {
-    return effects;
+  const raw: LatLon = { lat: fix.lat, lon: fix.lon };
+  const outside = !isInsideArena(state.arena, raw);
+  const pos = clampToArena(state.arena, raw);
+  if (outside) {
+    effects.push({ kind: "boundaryPush", seatId, at: pos });
   }
+  seat.position = pos;
 
   // Plant
   if (seat.mode === "toPlant" || seat.mode === "joining") {
-    const marker = seat.respawnNode;
-    if (marker === null) {
-      seat.respawnNode = pickNearestSafeNode(state, snap.nodeId, seat.id);
+    if (seat.respawnAt === null) {
+      seat.respawnAt = pickNearestSafePoint(state, pos, seat.id);
     }
-    const target = state.graph.nodes[seat.respawnNode!]!;
-    const d = haversineM(fix.lat, fix.lon, target.lat, target.lon);
+    const d = haversineM(pos.lat, pos.lon, seat.respawnAt.lat, seat.respawnAt.lon);
     if (d <= state.plantRadiusM) {
-      const granted = grantStarter(state, seat, seat.respawnNode!);
+      const ring = grantStarter(state, seat, seat.respawnAt);
       seat.mode = "safe";
-      seat.headNode = seat.respawnNode;
-      seat.headEdge = snap.edgeId;
-      seat.respawnNode = null;
-      effects.push({ kind: "planted", seatId, edges: granted });
+      seat.position = { ...seat.respawnAt };
+      seat.respawnAt = null;
+      effects.push({ kind: "planted", seatId, ring });
     }
     return effects;
   }
@@ -335,74 +359,111 @@ export function applyFix(
     return effects;
   }
 
-  // Cuts: if we step on someone else's open trail edge
+  // Cuts: proximity to someone else's open freehand trail
   for (const other of state.seats.values()) {
     if (other.id === seat.id) continue;
     if (other.mode !== "trailing") continue;
-    const onTrail =
-      other.trail.includes(snap.edgeId) || other.headEdge === snap.edgeId;
-    if (!onTrail) continue;
-    // Home contact does not cut: cutter must not be only on own land without trailing intent.
-    // Plan: cut from home does not count as hunt — skip if seat is safe and edge is owned by seat.
-    if (seat.mode === "safe" && seat.ownedEdges.has(snap.edgeId)) continue;
+    if (other.trail.length < 2) continue;
+    const dist = distanceToPolylineM(pos, other.trail);
+    if (dist > state.cutProximityM) continue;
+    // Home contact does not count as a hunt cut
+    if (seat.mode === "safe" && pointInOwned(seat, pos)) continue;
     effects.push(...wipeSeat(state, other, seat.id, nowMs));
   }
 
-  const onOwn = seat.ownedEdges.has(snap.edgeId);
+  const onOwn = pointInOwned(seat, pos);
 
   if (seat.mode === "safe") {
     if (!onOwn) {
       seat.mode = "trailing";
-      seat.trail = [snap.edgeId];
-      seat.headEdge = snap.edgeId;
-      seat.headNode = snap.nodeId;
+      seat.trail = [pos];
       effects.push({ kind: "trailOpen", seatId });
-      effects.push({ kind: "trailExtend", seatId, edgeId: snap.edgeId });
-    } else {
-      seat.headEdge = snap.edgeId;
-      seat.headNode = snap.nodeId;
+      effects.push({ kind: "trailExtend", seatId, point: pos });
     }
     return effects;
   }
 
   if (seat.mode === "trailing") {
     if (onOwn) {
-      // Bank
-      const claimed = [...seat.trail];
-      for (const eId of claimed) {
-        const prev = state.edgeOwner.get(eId);
-        if (prev !== undefined && prev !== seat.id) {
-          const other = state.seats.get(prev);
-          other?.ownedEdges.delete(eId);
-          if (other) recomputeArea(state, other);
+      const claimed = [...seat.trail, pos];
+      // Close ring
+      if (
+        claimed.length >= 2 &&
+        haversineM(
+          claimed[0]!.lat,
+          claimed[0]!.lon,
+          claimed[claimed.length - 1]!.lat,
+          claimed[claimed.length - 1]!.lon,
+        ) > 1
+      ) {
+        claimed.push({ ...claimed[0]! });
+      }
+      let area = ringAreaM2(claimed);
+      // Thin out-and-back: score corridor ≈ length × path width
+      if (area < 40) {
+        const len = polylineLengthM(seat.trail);
+        area = len * state.pathWidthM;
+        // Inflate a thin sausage around the trail for ownership paint
+        if (seat.trail.length >= 2) {
+          const inflated = inflateTrailRing(seat.trail, state.pathWidthM / 2);
+          seat.owned.push(inflated);
+          stealOverlapping(state, seat, inflated);
+          seat.trail = [];
+          seat.mode = "safe";
+          recomputeArea(seat, state.pathWidthM);
+          effects.push({
+            kind: "banked",
+            seatId,
+            ring: inflated,
+            areaM2: area,
+          });
+          return effects;
         }
-        state.edgeOwner.set(eId, seat.id);
-        seat.ownedEdges.add(eId);
+      } else {
+        seat.owned.push(claimed);
+        stealOverlapping(state, seat, claimed);
       }
       seat.trail = [];
-      seat.headEdge = snap.edgeId;
-      seat.headNode = snap.nodeId;
       seat.mode = "safe";
-      maybeEncloseFaces(state, seat);
-      recomputeArea(state, seat);
+      recomputeArea(seat, state.pathWidthM);
       effects.push({
         kind: "banked",
         seatId,
-        edges: claimed,
-        faces: [...seat.ownedFaces],
+        ring: claimed,
+        areaM2: area,
       });
       return effects;
     }
 
-    if (!seat.trail.includes(snap.edgeId)) {
-      seat.trail.push(snap.edgeId);
-      effects.push({ kind: "trailExtend", seatId, edgeId: snap.edgeId });
-    }
-    seat.headEdge = snap.edgeId;
-    seat.headNode = snap.nodeId;
+    const ext = appendTrail(state, seat, pos);
+    if (ext) effects.push(ext);
   }
 
   return effects;
+}
+
+/** Build a thin closed ring around a polyline (stadium / buffer approx). */
+function inflateTrailRing(line: LatLon[], halfWidthM: number): LatLon[] {
+  if (line.length < 2) return circleRing(line[0] ?? { lat: 0, lon: 0 }, halfWidthM, 10);
+  const origin = line[0]!;
+  const pts = line.map((p) => toLocalM(origin.lat, origin.lon, p.lat, p.lon));
+  const left: { x: number; y: number }[] = [];
+  const right: { x: number; y: number }[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[Math.max(0, i - 1)]!;
+    const next = pts[Math.min(pts.length - 1, i + 1)]!;
+    const dx = next.x - prev.x;
+    const dy = next.y - prev.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * halfWidthM;
+    const ny = (dx / len) * halfWidthM;
+    left.push({ x: pts[i]!.x + nx, y: pts[i]!.y + ny });
+    right.push({ x: pts[i]!.x - nx, y: pts[i]!.y - ny });
+  }
+  const ringLocal = [...left, ...right.reverse()];
+  const ring = ringLocal.map((p) => fromLocalM(origin.lat, origin.lon, p.x, p.y));
+  ring.push({ ...ring[0]! });
+  return ring;
 }
 
 /** Tick lobby clock; end if past endsAt. Also refresh contested respawns. */
@@ -428,11 +489,16 @@ export function seatPublicView(seat: Seat) {
     mode: seat.mode,
     color: seat.color,
     areaM2: seat.areaM2,
-    trail: [...seat.trail],
-    headEdge: seat.headEdge,
-    headNode: seat.headNode,
-    respawnNode: seat.respawnNode,
-    ownedEdgeCount: seat.ownedEdges.size,
-    ownedFaceCount: seat.ownedFaces.size,
+    trail: seat.trail.map((p) => ({ ...p })),
+    owned: seat.owned.map((ring) => ring.map((p) => ({ ...p }))),
+    position: seat.position ? { ...seat.position } : null,
+    respawnAt: seat.respawnAt ? { ...seat.respawnAt } : null,
   };
+}
+
+/** Debug helper: how far a seat is from arena center. */
+export function seatArenaDistM(state: LobbyState, seatId: SeatId): number | null {
+  const seat = state.seats.get(seatId);
+  if (!seat?.position) return null;
+  return distanceToArenaCenterM(state.arena, seat.position);
 }

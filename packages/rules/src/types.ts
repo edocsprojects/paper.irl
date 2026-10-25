@@ -1,7 +1,9 @@
+export type SeatId = number;
+
+/** Deferred / optional OSM path graph ids (basemap / later modes). */
 export type NodeId = number;
 export type EdgeId = number;
 export type FaceId = number;
-export type SeatId = number;
 
 export type LobbyPhase = "open" | "live" | "ended";
 export type SeatMode =
@@ -12,19 +14,34 @@ export type SeatMode =
   | "ghost"
   | "left";
 
+export interface LatLon {
+  lat: number;
+  lon: number;
+}
+
+/** Circular (or later polygonal) play boundary. Freeplay MVP uses a circle. */
+export interface Arena {
+  id: string;
+  centerLat: number;
+  centerLon: number;
+  radiusM: number;
+  /** Corridor width used when scoring thin trail claims. */
+  pathWidthM: number;
+  starterRadiusM: number;
+}
+
+/** Optional OSM centerline graph — not required for freeplay MVP. */
 export interface GraphNode {
   id: NodeId;
   lat: number;
   lon: number;
 }
 
-/** Undirected centerline interval between two nodes. */
 export interface GraphEdge {
   id: EdgeId;
   a: NodeId;
   b: NodeId;
   lengthM: number;
-  /** Corridor area contribution (length × pathWidthM). */
   areaM2: number;
 }
 
@@ -43,7 +60,6 @@ export interface LobbyGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   faces: GraphFace[];
-  /** adjacency: nodeId -> edgeIds */
   nodeEdges: Map<NodeId, EdgeId[]>;
 }
 
@@ -61,13 +77,12 @@ export interface Seat {
   nickname: string;
   mode: SeatMode;
   color: string;
-  /** Owned undirected edges. */
-  ownedEdges: Set<EdgeId>;
-  ownedFaces: Set<FaceId>;
-  trail: EdgeId[];
-  headEdge: EdgeId | null;
-  headNode: NodeId | null;
-  respawnNode: NodeId | null;
+  /** Closed rings (lat/lon), paper.io-style territory. */
+  owned: LatLon[][];
+  /** Open freehand trail while outside owned land. */
+  trail: LatLon[];
+  position: LatLon | null;
+  respawnAt: LatLon | null;
   areaM2: number;
   ghostUntilMs: number | null;
 }
@@ -78,26 +93,28 @@ export interface LobbyState {
   durationMs: number;
   startedAtMs: number | null;
   endsAtMs: number | null;
-  graph: LobbyGraph;
-  /** edgeId -> seatId owner, or null if tracked separately via seats */
-  edgeOwner: Map<EdgeId, SeatId>;
-  faceOwner: Map<FaceId, SeatId>;
+  arena: Arena;
   seats: Map<SeatId, Seat>;
   nextSeatId: SeatId;
-  cutOverlapM: number;
+  cutProximityM: number;
   plantDwellMs: number;
   plantRadiusM: number;
   pathWidthM: number;
   maxSeats: number;
+  /** Min meters between successive trail samples. */
+  trailSampleM: number;
+  /** Soft-reject / push-back when outside arena. */
+  boundaryMode: "clamp";
 }
 
 export type Effect =
-  | { kind: "planted"; seatId: SeatId; edges: EdgeId[] }
+  | { kind: "planted"; seatId: SeatId; ring: LatLon[] }
   | { kind: "trailOpen"; seatId: SeatId }
-  | { kind: "trailExtend"; seatId: SeatId; edgeId: EdgeId }
-  | { kind: "banked"; seatId: SeatId; edges: EdgeId[]; faces: FaceId[] }
+  | { kind: "trailExtend"; seatId: SeatId; point: LatLon }
+  | { kind: "banked"; seatId: SeatId; ring: LatLon[]; areaM2: number }
   | { kind: "cut"; victimId: SeatId; byId: SeatId }
-  | { kind: "respawnAssigned"; seatId: SeatId; nodeId: NodeId }
-  | { kind: "respawnMoved"; seatId: SeatId; nodeId: NodeId }
+  | { kind: "respawnAssigned"; seatId: SeatId; at: LatLon }
+  | { kind: "respawnMoved"; seatId: SeatId; at: LatLon }
+  | { kind: "boundaryPush"; seatId: SeatId; at: LatLon }
   | { kind: "phase"; phase: LobbyPhase }
   | { kind: "rejected"; seatId: SeatId; reason: string };

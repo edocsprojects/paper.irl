@@ -12,6 +12,7 @@
     "@paper-irl/rules": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^22.10.7",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

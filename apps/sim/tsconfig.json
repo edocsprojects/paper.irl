@@ -5,6 +5,5 @@
     "rootDir": "src",
     "noEmit": true
   },
-  "include": ["src/**/*"],
-  "references": [{ "path": "../../packages/rules" }]
+  "include": ["src/**/*"]
 }

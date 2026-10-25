@@ -1,18 +1,12 @@
 import { fromLocalM } from "./geo.js";
+import { KELLER } from "./arena.js";
 import type { GraphEdge, GraphFace, GraphNode, LobbyGraph } from "./types.js";
 
-/** Kenneth H. Keller Hall, UMN. */
-export const KELLER = {
-  lat: 44.97452,
-  lon: -93.23256,
-  radiusM: 500,
-  pathWidthM: 5,
-} as const;
+export { KELLER } from "./arena.js";
 
 /**
- * Build a walkable grid of paths inside the Keller Hall radius.
- * Stand-in for OSM compile until the graph-compile package lands.
- * Dense enough for 8-bot sims and rule tests.
+ * Optional fixture grid (deferred path-graph mode / legacy tests).
+ * Freeplay MVP does not require this for claims.
  */
 export function buildKellerFixtureGraph(
   gridStepM = 80,
