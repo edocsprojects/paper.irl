@@ -35,6 +35,23 @@ function section(title) {
   console.log(`\n=== ${title} ===`);
 }
 
+section("@paper-irl/rules Metro resolve (.js → .ts source)");
+{
+  const rulesProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-rules-metro-resolve.js")],
+    { cwd: projectRoot, encoding: "utf8", env: process.env },
+  );
+  process.stdout.write(rulesProbe.stdout || "");
+  process.stderr.write(rulesProbe.stderr || "");
+  if (rulesProbe.status !== 0) {
+    fail(
+      `verify-rules-metro-resolve exited ${rulesProbe.status} — Metro cannot resolve packages/rules ./types.js`,
+    );
+  }
+  ok("verify-rules-metro-resolve (./types.js → types.ts)");
+}
+
 section("map trail render HTML (MapLibre layer, not payload-only)");
 {
   const trailProbe = spawnSync(
@@ -261,6 +278,16 @@ const exportResult = spawnSync(
 const exportLog = `${exportResult.stdout}\n${exportResult.stderr}`;
 if (exportResult.status !== 0) {
   console.error(exportLog);
+  if (/Unable to resolve module \.\/types\.js/.test(exportLog)) {
+    fail(
+      "expo export: Unable to resolve ./types.js from @paper-irl/rules — Metro must remap packages/rules .js→.ts (see metro.config.js resolveRequest)",
+    );
+  }
+  if (/Unable to resolve module \.\/[\w.-]+\.js from .*packages\/rules/.test(exportLog)) {
+    fail(
+      "expo export: packages/rules .js import failed — Metro resolveRequest remap broken",
+    );
+  }
   if (/Unable to resolve ["']@babel\/runtime/.test(exportLog)) {
     fail("expo export: @babel/runtime resolve failed");
   }
@@ -308,6 +335,11 @@ const rootExport = spawnSync(
 const rootLog = `${rootExport.stdout}\n${rootExport.stderr}`;
 if (rootExport.status !== 0) {
   console.error(rootLog);
+  if (/Unable to resolve module \.\/types\.js/.test(rootLog)) {
+    fail(
+      "root-cwd export: Unable to resolve ./types.js from @paper-irl/rules — Metro .js→.ts remap broken",
+    );
+  }
   if (/Unable to resolve ["']@babel\/runtime/.test(rootLog)) {
     fail("root-cwd export: @babel/runtime resolve failed");
   }
