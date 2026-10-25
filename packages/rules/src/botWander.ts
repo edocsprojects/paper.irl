@@ -89,14 +89,21 @@ function planLoop(state: LobbyState, home: LatLon, leashM: number, rand: () => n
  * Route along the grid: if the target is off-axis, aim first for the corner
  * of an L (walk down the street, then turn), like someone on sidewalks.
  */
-function gridRoute(state: LobbyState, pos: LatLon, target: LatLon): LatLon {
+function gridRoute(state: LobbyState, seat: Seat, pos: LatLon, target: LatLon): LatLon {
   const g = gridAngle(state);
   const v = toLocalM(pos.lat, pos.lon, target.lat, target.lon);
   const u = v.x * Math.cos(g) + v.y * Math.sin(g);
   const w = -v.x * Math.sin(g) + v.y * Math.cos(g);
   if (Math.abs(u) < 8 || Math.abs(w) < 8) return target;
-  // Longer leg first; the corner point stays fixed while we walk toward it.
-  return Math.abs(u) >= Math.abs(w) ? along(pos, g, u) : along(pos, g + Math.PI / 2, w);
+  const cu = along(pos, g, u);
+  const cw = along(pos, g + Math.PI / 2, w);
+  // Keep going the way we already face (no staircase flip-flopping between
+  // the two legs); with no heading yet, take the longer leg first.
+  const h = headings.get(keyOf(state, seat.id));
+  if (h === undefined) return Math.abs(u) >= Math.abs(w) ? cu : cw;
+  const au = u >= 0 ? g : g + Math.PI;
+  const aw = w >= 0 ? g + Math.PI / 2 : g - Math.PI / 2;
+  return Math.abs(angleDiff(au, h)) <= Math.abs(angleDiff(aw, h)) ? cu : cw;
 }
 const STUCK_WINDOW_MS = 6000;
 const STUCK_MIN_M = 4;
@@ -278,9 +285,9 @@ function stepToward(
   const maxTurn = MAX_TURN_RAD_PER_S * dt;
   const heading = current + Math.max(-maxTurn, Math.min(maxTurn, turn));
   // Pace drifts a little over time; slow down through corners, then speed up.
-  gait.drift = Math.max(0.85, Math.min(1.12, gait.drift + (rand() - 0.5) * 0.04 * dt * 5));
+  gait.drift = Math.max(0.88, Math.min(1.1, gait.drift + (rand() - 0.5) * 0.02 * dt));
   const cruise = paceMps(state, seat) * gait.drift;
-  const target = Math.abs(turn) > 0.6 ? cruise * 0.55 : cruise;
+  const target = cruise * (1 - 0.45 * Math.min(1, Math.abs(turn) / 1.4));
   const accel = ACCEL_MPS2 * state.speedScale * state.speedScale * dt;
   gait.speed = gait.speed < target ? Math.min(target, gait.speed + accel) : Math.max(target, gait.speed - accel * 2);
   const stepM = Math.min(Math.max(gait.speed, cruise * 0.3) * dt, Math.max(dist, 0.05));
@@ -425,17 +432,10 @@ function wanderStep(
   nowMs: number,
 ): LatLon {
   const arena = state.arena;
-  const reported =
+  const pos =
     seat.position ??
     seat.respawnAt ??
     ({ lat: arena.centerLat, lon: arena.centerLon } as LatLon);
-  // Steer from where the bot really is, not its noisy GPS fix (unless the
-  // game moved it, e.g. a respawn or a clamp at the boundary).
-  const truth = truths.get(keyOf(state, seat.id));
-  const pos =
-    truth && seat.position && haversineM(truth.lat, truth.lon, seat.position.lat, seat.position.lon) < 8
-      ? truth
-      : reported;
 
   if (seat.mode === "toPlant" || seat.mode === "joining" || seat.mode === "ghost") {
     raids.delete(keyOf(state, seat.id));
@@ -455,7 +455,7 @@ function wanderStep(
     // Sometimes exit toward someone's open trail (committed for a few s).
     const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.07);
     if (hunt) return stepToward(state, seat, pos, hunt, rand, nowMs);
-    return stepToward(state, seat, pos, gridRoute(state, pos, plan.goal), rand, nowMs);
+    return stepToward(state, seat, pos, gridRoute(state, seat, pos, plan.goal), rand, nowMs);
   }
 
   if (seat.mode === "trailing" && seat.owned.length) {
@@ -482,7 +482,7 @@ function wanderStep(
 
     if (readyToBank) {
       // Walk home down the streets (an L), not as the crow flies.
-      return stepToward(state, seat, pos, gridRoute(state, pos, homeEntry(state, seat, pos) ?? home), rand, nowMs);
+      return stepToward(state, seat, pos, gridRoute(state, seat, pos, homeEntry(state, seat, pos) ?? home), rand, nowMs);
     }
     void goalDist;
     const fromHome = haversineM(home.lat, home.lon, pos.lat, pos.lon);
@@ -511,10 +511,7 @@ export function wanderSeat(
   if (!seat || seat.mode === "left") return [];
 
   const autoPlant = opts?.autoPlant !== false;
-  const key = keyOf(state, seatId);
   const pos = wanderStep(state, seat, rand, autoPlant, nowMs);
-  truths.set(key, pos);
-  const fix = gpsFix(state, key, pos, seat.mode === "safe" || seat.mode === "trailing", rand, nowMs);
   // Remember open trail so we only reset the raid after a bank — never while
   // still walking out of the starter (that trapped bots inside the blob).
   const hadOpenTrail = seat.trail.length > 0 || seat.mode === "trailing";
@@ -523,8 +520,8 @@ export function wanderSeat(
     state,
     seatId,
     {
-      lat: fix.lat,
-      lon: fix.lon,
+      lat: pos.lat,
+      lon: pos.lon,
       accuracyM: 4 + rand() * 4,
       speedMps: 1.4 + rand() * 2.2,
       clientTsMs: nowMs,
@@ -543,39 +540,9 @@ export function wanderSeat(
   return effects;
 }
 
-/** Real phones wander a metre or two around the truth, slowly (not white noise). */
-const GPS_SIGMA_M = 1.1;
-const GPS_TAU_S = 4;
-const truths = new Map<string, LatLon>();
-const gpsNoise = new Map<string, { x: number; y: number; atMs: number }>();
-
-function gauss(rand: () => number): number {
-  return Math.sqrt(-2 * Math.log(Math.max(1e-9, rand()))) * Math.cos(2 * Math.PI * rand());
-}
-
-/** The fix a phone would report at `pos`: a correlated drift, kept inside the circle. */
-function gpsFix(state: LobbyState, key: string, pos: LatLon, on: boolean, rand: () => number, nowMs: number): LatLon {
-  let n = gpsNoise.get(key);
-  if (!on) {
-    gpsNoise.delete(key);
-    return pos;
-  }
-  if (!n) n = { x: 0, y: 0, atMs: nowMs };
-  // Wall-clock-ish: the drift changes with real seconds, not sim speed.
-  const dt = Math.max(0, Math.min(1, (nowMs - n.atMs) / 1000 / Math.max(1, state.speedScale)));
-  const k = dt / GPS_TAU_S;
-  const kick = GPS_SIGMA_M * Math.sqrt(2 * k);
-  n.x += -n.x * k + kick * gauss(rand);
-  n.y += -n.y * k + kick * gauss(rand);
-  n.atMs = nowMs;
-  gpsNoise.set(key, n);
-  const inner = { ...state.arena, radiusM: state.arena.radiusM - 1 };
-  return clampToArena(inner, fromLocalM(pos.lat, pos.lon, n.x, n.y));
-}
-
 /** Forget bot memory for a lobby (rematch / delete). */
 export function resetBotMemory(code: string) {
-  for (const m of [gaits, truths, gpsNoise]) for (const k of [...m.keys()]) if (k.startsWith(`${code}#`)) m.delete(k);
+  for (const k of [...gaits.keys()]) if (k.startsWith(`${code}#`)) gaits.delete(k);
   for (const k of [...headings.keys()]) if (k.startsWith(`${code}#`)) headings.delete(k);
   for (const k of [...raids.keys()]) if (k.startsWith(`${code}#`)) raids.delete(k);
   for (const k of [...lastStepMs.keys()]) if (k.startsWith(`${code}#`)) lastStepMs.delete(k);
