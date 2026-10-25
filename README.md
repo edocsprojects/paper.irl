@@ -1,114 +1,96 @@
 # paper.irl
 
-IRL [paper.io](https://paper.io)-style territory game. **MVP is freeplay GPS** inside a campus boundary (classic trail / bank / cut) — not OSM path-graph claims. First demo map: **Kenneth H. Keller Hall** (UMN), **500 m** circle, **15 min** lobbies, max **8** players.
+IRL [paper.io](https://paper.io): you move your body instead of a square. Leave your territory to draw a trail, loop back to claim everything it encloses, and cut other players by touching their trails. Freeplay GPS inside a circular zone (default demo spot: **Kenneth H. Keller Hall**, UMN), up to **8** players.
 
 ## Monorepo
 
 ```
-apps/mobile    Expo Android + iOS client (human / join-bots / host-bots)
-apps/web       Web app: sign-in, live 7-day GPS event, ranks, settings (+ bot demo mode)
-apps/server    HTTP API + bot loop (optional Postgres)
-apps/sim       8-bot mock GPS simulation (verification harness)
-packages/rules Pure freeplay rules + optional Keller OSM graph loader (deferred)
-data/keller    Optional OSM paths (basemap / later modes — not required for MVP play)
-docs/          MVP rules summary
+apps/web       Web app (main demo): sign-in, Home (Create / Join / Community Events),
+               lobby, game HUD, results, Settings (Real GPS / Simulation)
+apps/mobile    Expo React Native client (iOS / Android), real GPS + bot demo
+apps/server    Fastify HTTP API: lobbies, bot loop, 7-day community event, optional Postgres / Supabase auth
+apps/sim       Headless 8-bot simulation (verification harness)
+packages/rules Pure game rules (territory, cuts, respawn, bots) shared by everything
+docs/          MVP rules summary (docs/mvp-rules.md)
 ```
 
-## Quick start (local, no cloud)
+## Quick start (web demo)
 
 ```bash
 pnpm install
-pnpm demo          # browser UI: freeplay + timer + P1 spawn (http://localhost:5173)
-pnpm test          # rules unit tests + headless freeplay sim
-pnpm sim:lobby     # 8 mocked players wandering Keller circle
-pnpm dev:server    # API on :3001 (DATABASE_URL optional)
+pnpm dev:server    # terminal 1 — API on :3001 (builds packages/rules first)
+pnpm demo          # terminal 2 — web app on http://localhost:5173 (proxies /api → :3001)
 ```
 
-### Web app (live GPS event)
+Then:
+
+1. **Continue as a guest** (you get a random 12-character name; sign in to change it).
+2. **Settings → Game mode → Simulation**, pick a speed (1× ≈ jogging pace, up to 20×).
+3. **Home → Create game → Create** — bots fill the game, you auto-walk, the camera follows you.
+
+Use **Real GPS** mode to play outside: Create puts you in a lobby with a 6-letter code friends enter under **Join game**; the host taps **Start**, then you **Tap to spawn** where you stand. Phones only allow GPS on HTTPS — use `pnpm demo:phone` and open the LAN address it prints.
+
+**Community Events** → **Keller Hall** opens the 7-day public event (score / rank, countdown, live map, **Let's Claim!!**). In Simulation it runs locally with bots; in Real GPS it uses the server event.
+
+## Game rules (packages/rules)
+
+- **Spawn** where your GPS is; a starter disk (22 m / 72 ft) is planted there, always with clear ground from anyone else's land, trails and bodies. Bots without GPS are spread evenly across the arena.
+- **Trail**: leaving your land draws a trail (dashed line in your colour).
+- **Claim**: walking back into your land fills **everything the loop encloses** (real polygons, not a convex hull) and takes that ground from whoever held it. Lose all your land → you're eliminated.
+- **Cut**: touching (≈4 m, or stepping across) **anyone's** open trail eliminates its owner — even from inside your own land. Crossing your own trail is allowed.
+- **Death**: your land goes neutral and you're out for 3 s. A **respawn ring** appears ~2 radii from where you fell; walk into it and you're back in. While you're out the snackbar says to head back to your spawn area.
+- Units in the UI are imperial (ft / ft²); the rules and server work in metres.
+
+Full summary: [`docs/mvp-rules.md`](docs/mvp-rules.md).
+
+## Web app (apps/web)
+
+- Design: teammate's light theme (Manrope), illustrated sign-in (animated loop-and-claim) and Home art; Home + Settings tabs always visible.
+- Flow: sign-in → Home (**Create game** / **Join game** / **Community Events**) → Create config (radius 500 / 1,000 / 1,500 ft, max players, 5 / 10 / 15 min) → lobby card → 3-2-1 → full-screen game → results leaderboard (Play again / Leave).
+- Game HUD: top-3 board (% of arena), timer, **Zoom in / Zoom out**, red **Leave**, kill feed. Snackbar is only about you (claims, land taken, cuts you made, raid alerts, lead changes, 1 minute left) and fades after 3 s.
+- Map: OpenFreeMap streets with labels, POIs and transit stripped; no API key needed.
+- Google sign-in (optional): `cp .env.example .env` and fill `SUPABASE_*` / `VITE_SUPABASE_*`. Guests work without it.
+
+## Mobile app (apps/mobile)
+
+Expo React Native client with real GPS (`expo-location`), the in-game HUD (leaderboard, timer, zoom, leave), kill feed, respawn rings and death / spawn animations. It still uses the earlier dark design; the web design is the target for a follow-up restyle.
 
 ```bash
-cp .env.example .env   # fill SUPABASE_* / VITE_SUPABASE_* for Google sign-in (optional; guests work without)
-pnpm dev:server        # terminal 1 — hosts the 7-day event
-pnpm demo              # terminal 2 — http://localhost:5173 (proxies /api → :3001)
-pnpm demo:phone        # same over HTTPS on your LAN; phones only allow GPS on https
+pnpm dev:server                     # terminal 1
+pnpm mobile:ios                     # human lobby (Simulator API: http://127.0.0.1:3001)
+pnpm mobile:ios:host-bots           # auto-host a 2.5× bot match; player 1 auto-walks
+pnpm mobile / mobile:host-bots      # Android (emulator API: http://10.0.2.2:3001)
 ```
 
-- **Real GPS** (default): Let's Claim joins the current event; your first fix plants your base where you stand. Fixes outside the dashed circle are drawn for you in gray but never sent, so they can't score.
-- **Demo simulation** (Settings → Game mode): local bots, 1×–20× (1× ≈ jogging pace).
-- The event runs **7 days**; at the end the top player is recorded as winner and a new event starts. State persists in Postgres (`DATABASE_URL`) or `data/event/*.json`. Shorten with `EVENT_DURATION_MS` for testing.
-- Google sign-in goes through Supabase Auth; the server verifies the player's token before accepting fixes.
+Physical device: set `EXPO_PUBLIC_API_URL=http://<your-lan-ip>:3001`. iOS via Xcode: `pnpm --filter @paper-irl/rules build`, then `cd apps/mobile/ios && pod install && open paperirl.xcworkspace`. If Metro serves stale code, restart it with `--clear`. More: [`apps/mobile/README.md`](apps/mobile/README.md).
 
-### Android (Expo Go)
+## Tests
 
 ```bash
-pnpm dev:server                 # terminal 1
-pnpm mobile                     # human lobby (GPS or emulator mock)
-pnpm mobile:join-bots           # 7 bots + autopilot your seat
-pnpm mobile:host-bots           # create, fill 7 bots, start, autopilot you
+pnpm test        # rules unit tests (vitest) + headless 8-bot sim + mobile bundle / map checks
+pnpm typecheck   # all packages
 ```
 
-Android emulator API URL defaults to `http://10.0.2.2:3001`.
+`pnpm test` covers capture/steal/elimination, cuts (incl. sweep and from inside your land), respawn rings, spawn placement, 8-bot soaks (exclusive land, no stuck bots, fast ticks, demo pace), and `apps/mobile/scripts/verify-map-runtime.js`, which runs the real map page against MapLibre's style validation (with a sabotage self-check).
 
-### iOS / Xcode (Mac)
-
-```bash
-pnpm install
-pnpm --filter @paper-irl/rules build
-pnpm dev:server                 # terminal 1
-cd apps/mobile/ios && pod install && open paperirl.xcworkspace
-```
-
-In Xcode: pick an **iPhone Simulator** → **Run** (▶). Free **Personal Team** is enough for Simulator; paid Apple Developer ($99) only for TestFlight / broader device distribution.
-
-CLI: `pnpm mobile:ios` / `pnpm mobile:ios:join-bots` / `pnpm mobile:ios:host-bots` (same three modes; Simulator API default `http://127.0.0.1:3001`).
-
-Metro monorepo gate (required before Simulator): `pnpm verify:mobile` (also part of `pnpm test`). After switching branches / reinstalling, wipe stale Pods + DerivedData with `pnpm mobile:ios:clean`.
-
-Full Mac two-terminal steps: [`apps/mobile/README.md`](apps/mobile/README.md).
-
-No Google Maps key needed. Claims are freehand GPS polylines inside the lobby boundary; the basemap is a simple street map (OpenFreeMap). Camera follows Player 1 (“You”); tap anywhere on the Spawn overlay to plant / respawn while other bots keep wandering.
-
-Optional Postgres:
+Optional Postgres for the server:
 
 ```bash
 docker compose up -d
 export DATABASE_URL=postgres://paper:paper@localhost:5432/paper_irl
 ```
 
-Package name for rules is `@paper-irl/rules`.
+## API sketch (apps/server)
 
-## What is verified today
-
-| Check | Command | Expect |
-|---|---|---|
-| Plant only at marker | `pnpm test` | Cannot claim until plant |
-| Cut → wipe → neutral land → respawn | `pnpm test` | Victim area 0, must re-plant |
-| Boundary soft-push | `pnpm test` | Off-circle fixes clamped |
-| Top 3 by area at end | `pnpm test` | Sorted ranking |
-| 8-bot free wander / cut / respawn | `pnpm sim:lobby` | Exit 0 + JSON summary |
-| Watchable campus match | `pnpm demo` | Street map, boundary circle, freehand territory |
-| Server bots fill/start | `pnpm dev:server` + curl | See mobile README |
-
-## MVP product locks
-
-- **Freeplay GPS** inside the lobby boundary (circle now; polygon later). Off-boundary rejected / soft-pushed.
-- Trails / claims / cuts use **freehand lat/lon polylines** (paper.io-style). OSM path graph is **deferred / optional** (basemap only for now).
-- Host Start, nicknames, always-visible opponents, area score, land → neutral on death, nearest safe respawn (moves if contested).
-- Local demo needs no Google key. Cloud (Railway/Supabase) not required for local sim/tests.
-
-## API sketch
-
-- `POST /lobbies` → `{ code }`
-- `POST /lobbies/:code/join` `{ nickname }`
+- `POST /lobbies` `{ centerLat, centerLon, radiusM, maxSeats, durationMs, speedScale? }` → `{ code, arena }`
+- `POST /lobbies/:code/join` `{ nickname }` (blank → "Player N")
 - `POST /lobbies/:code/bots/fill` `{ leaveHumanSlots? }`
-- `POST /lobbies/:code/start` (starts bot tick loop)
-- `POST /lobbies/:code/fix` `{ seatId, fix }`
-- `POST /lobbies/:code/autopilot` `{ seatId }` — sim step for one seat
-- `GET /lobbies/:code` → arena + seats + top3 (freeplay)
-- `GET /event` → current 7-day event (seats, endsAt, last winner)
-- `POST /event/join` `{ name }` — join / rename (auth: `Authorization: Bearer <supabase token>` or `X-Guest-Id`)
-- `POST /event/fix` `{ fix }` — inside-circle GPS fix; outside fixes return `{ outside: true }` and are ignored
-- `GET /event/results` → recent winners
+- `POST /lobbies/:code/start`
+- `POST /lobbies/:code/fix` `{ seatId, fix }` → effects + lobby state
+- `POST /lobbies/:code/autopilot` `{ seatId, autoPlant? }` — dev autopilot step
+- `POST /lobbies/:code/rematch/ready` · `POST /lobbies/:code/rematch/start` `{ seatId }`
+- `GET /lobbies/:code` → arena, seats (territory polygons, trails, respawn rings), top3, kill `feed`, land `notices`, spawn `pops`
+- `GET /event` · `POST /event/join` `{ name }` · `POST /event/fix` `{ fix }` · `GET /event/results` — 7-day community event (auth: `Authorization: Bearer <supabase token>` or `X-Guest-Id`)
 
 ## License
 
