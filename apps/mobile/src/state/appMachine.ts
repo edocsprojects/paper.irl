@@ -194,7 +194,7 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
         // Toast only — never a modal / raw error for the cut message.
         next.snack = {
           id: (state.snack?.id ?? 0) + 1,
-          text: "You were cut — land wiped",
+          text: "You were cut",
           tone: "bad",
         };
       }
