@@ -275,9 +275,6 @@ async function main() {
     show("intro");
   });
 
-  // Home hero = the intro's illustrated map.
-  const heroSvg = document.querySelector(".intro-map")?.cloneNode(true);
-  if (heroSvg) $("home-hero").append(heroSvg);
 
   // ---------- Home ----------
   $("btn-create").addEventListener("click", () => {

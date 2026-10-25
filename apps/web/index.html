@@ -117,7 +117,67 @@
           <span class="home-brand">paper.irl</span>
           <span class="home-mode" id="home-mode"></span>
         </header>
-        <div class="home-hero" id="home-hero"></div>
+        <div class="home-hero" id="home-hero">
+          <!-- Home's own scene: lakeside plaza; you loop out and claim (animated). -->
+          <svg class="home-map" viewBox="0 0 400 440" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <defs>
+              <g id="h-minor" fill="none" stroke-linecap="round">
+                <path d="M-10 70 H410 M-10 380 H410 M60 -10 V450 M330 -10 V450" />
+                <path d="M140 -10 Q150 120 120 200 T150 450" />
+                <path d="M200 70 Q260 120 330 110" />
+              </g>
+              <g id="h-major" fill="none" stroke-linecap="round">
+                <path d="M-20 330 L420 60" />
+              </g>
+              <path id="h-loop" d="M214 250 C 236 196, 300 168, 336 196 S 352 300, 300 316 S 236 312, 222 286" />
+              <mask id="h-draw">
+                <use href="#h-loop" class="h-draw-stroke" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" />
+              </mask>
+            </defs>
+            <rect class="m-land" width="400" height="440" />
+            <path class="h-lake" d="M-20 300 Q60 280 110 330 Q150 380 110 460 L-20 460 Z" />
+            <circle class="m-park" cx="300" cy="96" r="58" />
+            <path class="m-park" d="M24 96 h80 a8 8 0 0 1 8 8 v70 a8 8 0 0 1 -8 8 h-80 a8 8 0 0 1 -8 -8 v-70 a8 8 0 0 1 8 -8z" />
+            <g class="m-building">
+              <rect x="8" y="8" width="44" height="52" rx="5" />
+              <rect x="70" y="8" width="58" height="52" rx="5" />
+              <rect x="160" y="8" width="56" height="52" rx="5" />
+              <rect x="346" y="8" width="46" height="52" rx="5" />
+              <rect x="160" y="84" width="34" height="56" rx="5" />
+              <rect x="346" y="80" width="46" height="70" rx="5" />
+              <rect x="70" y="200" width="44" height="60" rx="5" />
+              <rect x="346" y="240" width="46" height="60" rx="5" />
+              <rect x="176" y="330" width="70" height="40" rx="5" />
+              <rect x="260" y="330" width="56" height="40" rx="5" />
+              <rect x="176" y="396" width="140" height="40" rx="5" />
+              <rect x="346" y="396" width="46" height="40" rx="5" />
+            </g>
+            <use href="#h-minor" class="m-road-edge" stroke-width="12" />
+            <use href="#h-minor" class="m-road" stroke-width="8" />
+            <use href="#h-major" class="m-major-edge" stroke-width="20" />
+            <use href="#h-major" class="m-major" stroke-width="14" />
+            <circle class="m-boundary" cx="210" cy="230" r="196" />
+
+            <!-- Other players -->
+            <path class="t-fill" style="--t:#8b5cf6" d="M60 120 q34 -18 58 6 q12 34 -12 54 q-34 12 -52 -12 q-10 -28 6 -48z" />
+            <circle class="t-dot" style="--t:#8b5cf6" cx="112" cy="166" r="6" />
+            <path class="t-fill" style="--t:#14b8a6" d="M262 60 q40 -10 58 18 q8 34 -20 48 q-36 6 -46 -24 q-4 -26 8 -42z" />
+            <path class="t-trail" style="--t:#14b8a6" d="M300 124 q-10 40 -50 56" />
+            <circle class="t-dot" style="--t:#14b8a6" cx="250" cy="180" r="6" />
+            <circle class="h-ring" cx="80" cy="360" r="26" />
+            <circle class="t-dot h-ghost" style="--t:#ec4899" cx="96" cy="388" r="6" />
+
+            <!-- You: land, the loop being drawn, then the claim filling in -->
+            <path class="h-claim" d="M214 250 C 236 196, 300 168, 336 196 S 352 300, 300 316 S 236 312, 222 286 Z" />
+            <path class="t-fill" style="--t:#e85d04" d="M150 214 q46 -24 74 14 q16 40 -12 66 q-40 18 -68 -10 q-18 -36 6 -70z" />
+            <use href="#h-loop" class="t-trail h-trail" style="--t:#e85d04" mask="url(#h-draw)" />
+            <circle class="t-dot h-runner" style="--t:#e85d04" r="9">
+              <animateMotion dur="7s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.7;1" calcMode="linear">
+                <mpath href="#h-loop" />
+              </animateMotion>
+            </circle>
+          </svg>
+        </div>
         <div class="home-actions">
           <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
           <div class="return-game hidden" id="return-game">
