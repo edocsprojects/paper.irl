@@ -17,13 +17,13 @@ docs/         MVP rules summary
 
 ```bash
 pnpm install
-pnpm demo          # browser UI: satellite + timer + 8 bots (http://localhost:5173)
+pnpm demo          # browser UI: street map + timer + P1 spawn (http://localhost:5173)
 pnpm test          # rules unit tests + headless sim
 pnpm sim:lobby     # 8 mocked players on Keller fixture (CI harness)
 pnpm dev:server    # API on :3001 (DATABASE_URL optional)
 ```
 
-No Google Maps key needed for the demo. Paths come from OpenStreetMap; the basemap is Esri World Imagery (satellite).
+No Google Maps key needed. Paths come from OpenStreetMap; the basemap is a simple street map (OpenFreeMap). Camera follows Player 1 (“You”); tap anywhere on the Spawn overlay to plant / respawn while other bots keep running.
 
 Optional Postgres:
 
@@ -41,7 +41,7 @@ pnpm dev:server
 | Cut → wipe → neutral land → respawn | `pnpm test` | Victim area 0, must re-plant |
 | Top 3 by area at end | `pnpm test` | Sorted ranking |
 | 8-bot random walk / cut / respawn | `pnpm sim:lobby` | Exit 0 + JSON summary |
-| Watchable campus match | `pnpm demo` | Satellite map, timer, scores, live bots |
+| Watchable campus match | `pnpm demo` | Street map, P1 camera, spawn, top 3, snackbars |
 
 ## MVP product locks
 
