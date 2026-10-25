@@ -8,17 +8,12 @@ import type { LaunchMode } from "../lib/config";
 
 export type { LobbyPayload, SeatView };
 
-/** Local player control — chosen on Create setup (plain labels). */
-export type PlayControl = "manual" | "auto_sim";
-
 export type Session = {
   code: string;
   seatId: number;
   nickname: string;
   mode: LaunchMode;
   isHost: boolean;
-  /** Default Manual for this testing build. */
-  playControl: PlayControl;
 };
 
 export type UiScreen =

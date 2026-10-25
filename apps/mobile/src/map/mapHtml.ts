@@ -1,10 +1,10 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 6;
+export const MAP_HTML_REVISION = 7;
 
 /**
  * Street basemap (OpenFreeMap) — labels stripped.
- * Continuous rAF: player dots + open trail tips lerp between polls.
- * Manual mode: drag on the map posts move events (Simulator has no GPS walk).
+ * Neighborhood zoom; dedicated trail source above fills; dots+tips lerp.
+ * Everyone auto-sims — no Manual drag.
  */
 export function buildMapHtml(): string {
   return `<!doctype html>
@@ -35,7 +35,8 @@ export function buildMapHtml(): string {
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const STYLE='https://tiles.openfreemap.org/styles/bright';
-const PLAY_ZOOM=16.35;
+/** Neighborhood view — zone + trail + nearby players (not city, not tight). */
+const PLAY_ZOOM=15.15;
 const CAM_LERP=0.12;
 const DOT_LERP=0.22;
 let map, ready=false;
@@ -44,10 +45,6 @@ let cam={lon:-93.23256,lat:44.97452,zoom:PLAY_ZOOM};
 let target={lon:-93.23256,lat:44.97452};
 let camRunning=false;
 let boundaryDrawn=false;
-let dragEnabled=false;
-let dragging=false;
-let lastMovePost=0;
-/** seatId -> live display state */
 const seatsLive={};
 let rafOn=false;
 let lastState=null;
@@ -114,40 +111,41 @@ function followYou(you){
   if(!camRunning) requestAnimationFrame(tickCam);
 }
 
-/** Open trail for paint: server samples + live lerped tip (always ≥2 when trailing). */
+/** Open trail polyline: fixed samples + live lerped tip while outside. */
 function trailCoords(live){
   const base=(live.trail||[]).map(p=>[p.lon,p.lat]);
+  if(live.mode!=='trailing' && base.length<1) return null;
   const tip=[live.lon,live.lat];
-  if(live.mode==='trailing' || base.length>=1){
-    if(base.length===0) return [tip, tip];
-    // Replace near-duplicate tip so the line grows smoothly to the moving dot
-    const last=base[base.length-1];
-    if(Math.abs(last[0]-tip[0])<1e-9 && Math.abs(last[1]-tip[1])<1e-9){
-      return base.length>=2 ? base : [base[0], tip];
-    }
-    return base.concat([tip]);
+  if(base.length===0) return null;
+  if(base.length===1){
+    const a=base[0];
+    if(Math.abs(a[0]-tip[0])<1e-9 && Math.abs(a[1]-tip[1])<1e-9) return null;
+    return [a, tip];
   }
-  return null;
+  const last=base[base.length-1];
+  if(Math.abs(last[0]-tip[0])<1e-9 && Math.abs(last[1]-tip[1])<1e-9) return base;
+  return base.concat([tip]);
 }
 
 function flushLayers(){
-  if(!ready||!map.getSource('players')||!map.getSource('owned')||!lastState) return;
+  if(!ready||!map.getSource('players')||!map.getSource('owned')||!map.getSource('trails')||!lastState) return;
   const owned={type:'FeatureCollection',features:[]};
+  const trails={type:'FeatureCollection',features:[]};
   const players={type:'FeatureCollection',features:[]};
   for(const id of Object.keys(seatsLive)){
     const live=seatsLive[id];
-    const border=darken(live.color,0.28);
+    const border=darken(live.color,0.22);
     for(const ring of (live.owned||[])){
       if(!ring||ring.length<3) continue;
       const coords=ringCoords(ring);
       if(coords.length&&(coords[0][0]!==coords[coords.length-1][0]||coords[0][1]!==coords[coords.length-1][1])){
         coords.push(coords[0]);
       }
-      owned.features.push({type:'Feature',properties:{fill:live.color,border,kind:'owned'},geometry:{type:'Polygon',coordinates:[coords]}});
+      owned.features.push({type:'Feature',properties:{fill:live.color,border},geometry:{type:'Polygon',coordinates:[coords]}});
     }
     const tc=trailCoords(live);
     if(tc && tc.length>=2){
-      owned.features.push({type:'Feature',properties:{fill:live.color,border,kind:'trail'},geometry:{type:'LineString',coordinates:tc}});
+      trails.features.push({type:'Feature',properties:{color:live.color,border},geometry:{type:'LineString',coordinates:tc}});
     }
     players.features.push({
       type:'Feature',
@@ -163,6 +161,7 @@ function flushLayers(){
     }
   }
   map.getSource('owned').setData(owned);
+  map.getSource('trails').setData(trails);
   map.getSource('players').setData(players);
 }
 
@@ -216,7 +215,6 @@ function syncSeats(seats){
 function paint(state){
   if(!ready||!state||!state.arena) return;
   lastState=state;
-  if(typeof state.dragEnabled==='boolean') dragEnabled=!!state.dragEnabled;
   const fp=fingerprint(state);
   const you=(state.seats||[]).find(s=>s.you);
   if(fp===lastFp){
@@ -236,43 +234,6 @@ function paint(state){
   followYou(you);
 }
 
-function onPointerDown(e){
-  if(!dragEnabled||!ready) return;
-  dragging=true;
-  try{ map.getCanvas().setPointerCapture(e.pointerId); }catch(err){}
-  moveFromEvent(e);
-}
-function onPointerMove(e){
-  if(!dragging||!dragEnabled) return;
-  moveFromEvent(e);
-}
-function onPointerUp(e){
-  dragging=false;
-  try{ map.getCanvas().releasePointerCapture(e.pointerId); }catch(err){}
-}
-function moveFromEvent(e){
-  const now=Date.now();
-  if(now-lastMovePost<50) return;
-  lastMovePost=now;
-  const rect=map.getCanvas().getBoundingClientRect();
-  const x=(e.clientX!=null?e.clientX:e.touches&&e.touches[0]?e.touches[0].clientX:0)-rect.left;
-  const y=(e.clientY!=null?e.clientY:e.touches&&e.touches[0]?e.touches[0].clientY:0)-rect.top;
-  const ll=map.unproject([x,y]);
-  post({type:'move',lat:ll.lat,lon:ll.lng});
-  // Optimistic local tip so Manual drag feels immediate
-  for(const id of Object.keys(seatsLive)){
-    const d=seatsLive[id];
-    if(d.you){
-      d.tLon=ll.lng; d.tLat=ll.lat;
-      if(d.mode==='trailing'|| (d.trail&&d.trail.length)){
-        /* tip follows via trailCoords */
-      }
-      if(!rafOn) requestAnimationFrame(tickFrame);
-      break;
-    }
-  }
-}
-
 map=new maplibregl.Map({
   container:'map',
   style:STYLE,
@@ -290,20 +251,17 @@ map=new maplibregl.Map({
 map.on('load',()=>{
   declutter();
   map.addSource('boundary',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'boundary',type:'line',source:'boundary',paint:{'line-color':'#1b1b1b','line-opacity':0.5,'line-width':2,'line-dasharray':[2,1.4]}});
+  map.addLayer({id:'boundary',type:'line',source:'boundary',paint:{'line-color':'#1b1b1b','line-opacity':0.45,'line-width':2,'line-dasharray':[2,1.4]}});
   map.addSource('owned',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'owned-fill',type:'fill',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'fill-color':['get','fill'],'fill-opacity':0.36}});
-  map.addLayer({id:'owned-border',type:'line',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.6}});
-  // Solid bright trails — cut mechanic must be visible
-  map.addLayer({id:'trails',type:'line',source:'owned',filter:['==',['get','kind'],'trail'],paint:{'line-color':['get','border'],'line-opacity':1,'line-width':4.2,'line-cap':'round','line-join':'round'}});
+  map.addLayer({id:'owned-fill',type:'fill',source:'owned',paint:{'fill-color':['get','fill'],'fill-opacity':0.34}});
+  map.addLayer({id:'owned-border',type:'line',source:'owned',paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.4}});
+  // Dedicated trail source ABOVE fills — bright casing so cut lines read clearly
+  map.addSource('trails',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'trails-casing',type:'line',source:'trails',paint:{'line-color':'#ffffff','line-opacity':0.9,'line-width':7,'line-cap':'round','line-join':'round'}});
+  map.addLayer({id:'trails',type:'line',source:'trails',paint:{'line-color':['get','color'],'line-opacity':1,'line-width':4.5,'line-cap':'round','line-join':'round'}});
   map.addSource('players',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],10,7],'circle-color':'#fff','circle-stroke-width':3,'circle-stroke-color':['get','color']}});
   map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],11,7.5],'circle-color':['get','color'],'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
-  const canvas=map.getCanvas();
-  canvas.addEventListener('pointerdown',onPointerDown);
-  canvas.addEventListener('pointermove',onPointerMove);
-  canvas.addEventListener('pointerup',onPointerUp);
-  canvas.addEventListener('pointercancel',onPointerUp);
   ready=true; post({type:'ready'});
 });
 map.on('styledata',()=>{ if(ready) declutter(); });

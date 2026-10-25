@@ -12,7 +12,7 @@ import { LinearishBg } from "../components/LinearishBg";
 import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
 import { formatLatLon } from "../arena/geoProject";
 import { colors, fonts } from "../theme/tokens";
-import type { PlayControl, Session } from "../state/appMachine";
+import type { Session } from "../state/appMachine";
 
 type Props = {
   busy: boolean;
@@ -32,6 +32,7 @@ function parseIntClamped(raw: string, fallback: number, min: number, max: number
 /**
  * Config only — Create opens the server lobby (random code + bots).
  * Host presses Start on the lobby card, not here.
+ * Everyone auto-sims in play (no Manual / Auto toggle).
  */
 export function CreateSetupScreen({
   busy,
@@ -43,8 +44,6 @@ export function CreateSetupScreen({
   const [nickname, setNickname] = useState("You");
   const [radiusM, setRadiusM] = useState("500");
   const [maxPlayers, setMaxPlayers] = useState("8");
-  /** Testing default: Manual — drag on map; tap to plant/respawn. */
-  const [playControl, setPlayControl] = useState<PlayControl>("manual");
   const lat = TEST_LOCATION.lat;
   const lon = TEST_LOCATION.lon;
 
@@ -53,7 +52,6 @@ export function CreateSetupScreen({
     try {
       const maxSeats = parseIntClamped(maxPlayers, 8, 2, 8);
       const radius = parseIntClamped(radiusM, 500, 50, 5000);
-      // 1) Open a real lobby (phase=open) with a fresh random code.
       const created = await api.createLobby({
         maxSeats,
         radiusM: radius,
@@ -63,9 +61,7 @@ export function CreateSetupScreen({
       if (created.phase !== "open") {
         throw new Error("lobby_not_open");
       }
-      // 2) Host joins while still open.
       const joined = await api.join(created.code, nickname.trim() || "You");
-      // 3) Prefill empty seats with bots (still open — Start is separate).
       await api.fillBots(created.code, 1);
       const lobby = await api.get(created.code);
       if (lobby.phase !== "open") {
@@ -78,7 +74,6 @@ export function CreateSetupScreen({
           nickname: joined.seat.nickname,
           mode: "human",
           isHost: true,
-          playControl,
         },
         lobby,
       );
@@ -132,44 +127,6 @@ export function CreateSetupScreen({
             placeholderTextColor={colors.muted}
           />
         </View>
-      </View>
-
-      <Text style={styles.label}>Your movement</Text>
-      <View style={styles.modeRow}>
-        <Pressable
-          style={[
-            styles.modeChip,
-            playControl === "manual" && styles.modeChipOn,
-          ]}
-          onPress={() => setPlayControl("manual")}
-        >
-          <Text
-            style={[
-              styles.modeChipText,
-              playControl === "manual" && styles.modeChipTextOn,
-            ]}
-          >
-            Manual
-          </Text>
-          <Text style={styles.modeHint}>Drag map · tap to respawn</Text>
-        </Pressable>
-        <Pressable
-          style={[
-            styles.modeChip,
-            playControl === "auto_sim" && styles.modeChipOn,
-          ]}
-          onPress={() => setPlayControl("auto_sim")}
-        >
-          <Text
-            style={[
-              styles.modeChipText,
-              playControl === "auto_sim" && styles.modeChipTextOn,
-            ]}
-          >
-            Auto sim
-          </Text>
-          <Text style={styles.modeHint}>Moves and respawns alone</Text>
-        </Pressable>
       </View>
 
       <Pressable
@@ -226,33 +183,6 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: "row", gap: 12 },
   half: { flex: 1 },
-  modeRow: { flexDirection: "row", gap: 10 },
-  modeChip: {
-    flex: 1,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: colors.line,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  modeChipOn: {
-    borderColor: colors.accent,
-    backgroundColor: "rgba(232,93,4,0.08)",
-  },
-  modeChipText: {
-    fontFamily: fonts.ui,
-    fontSize: 16,
-    color: colors.inkSoft,
-  },
-  modeChipTextOn: { color: colors.accentDeep },
-  modeHint: {
-    marginTop: 4,
-    fontFamily: fonts.body,
-    fontSize: 12,
-    color: colors.muted,
-    lineHeight: 16,
-  },
   btn: {
     marginTop: 32,
     backgroundColor: colors.accent,

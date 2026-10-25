@@ -54,8 +54,8 @@ export function createLobby(
     plantRadiusM: 20,
     pathWidthM: arena.pathWidthM,
     maxSeats: opts?.maxSeats ?? 8,
-    /** Dense enough that open trails paint quickly at walk/jog step size. */
-    trailSampleM: 1.2,
+    /** Match walk/jog step size so every ~step extends the open trail. */
+    trailSampleM: 0.45,
     boundaryMode: "clamp",
     rematchReady: new Set(),
   };
@@ -102,8 +102,16 @@ export function startLobby(state: LobbyState, nowMs: number): Effect[] {
   state.startedAtMs = nowMs;
   state.endsAtMs = nowMs + state.durationMs;
   const effects: Effect[] = [{ kind: "phase", phase: "live" }];
+  // Cluster plant markers near arena center so local raids overlap (cuts on screen).
   for (const seat of state.seats.values()) {
-    const at = pickNearestSafePoint(state, null, randomSeed(seat.id));
+    const rand = mulberry(randomSeed(seat.id));
+    const cluster = fromLocalM(
+      state.arena.centerLat,
+      state.arena.centerLon,
+      (rand() - 0.5) * 90,
+      (rand() - 0.5) * 90,
+    );
+    const at = pickNearestSafePoint(state, cluster, randomSeed(seat.id));
     seat.respawnAt = at;
     seat.mode = "toPlant";
     effects.push({ kind: "respawnAssigned", seatId: seat.id, at });
@@ -337,11 +345,9 @@ function appendTrail(state: LobbyState, seat: Seat, p: LatLon): Effect | null {
   const last = seat.trail[seat.trail.length - 1];
   if (last) {
     const d = haversineM(last.lat, last.lon, p.lat, p.lon);
-    if (d < state.trailSampleM) {
-      // Still move the tip for cut detection feel
-      seat.trail[seat.trail.length - 1] = p;
-      return null;
-    }
+    // Never relocate prior samples — moving the only point kept trails at
+    // length 1 (invisible degenerate line) when step < trailSampleM.
+    if (d < state.trailSampleM) return null;
   }
   seat.trail.push(p);
   return { kind: "trailExtend", seatId: seat.id, point: p };

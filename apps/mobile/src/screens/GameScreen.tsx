@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState as RNAppState, StyleSheet, Text, View } from "react-native";
-import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
+import { api, type LobbyPayload } from "../lib/api";
 import { GameMap, mapFingerprint } from "../map/GameMap";
 import { SnackbarHost } from "../components/SnackbarHost";
 import { PlayHud } from "../components/PlayHud";
 import { colors, fonts } from "../theme/tokens";
 import {
-  spawnOverlayVisible,
   type AppState,
   type AppEvent,
   type Session,
 } from "../state/appMachine";
-import { SpawnOverlay } from "./SpawnOverlay";
 import { ResultsOverlay } from "./ResultsOverlay";
 import { RematchWaiting } from "./RematchWaiting";
 import { LobbyCardScreen } from "./LobbyCardScreen";
@@ -25,10 +23,8 @@ type Props = {
 };
 
 /**
- * Live play shell — street MapLibre basemap (labels stripped).
- * Manual: drag map to move; tap overlay to plant/respawn (no auto-move).
- * Auto sim: local seat wanders + auto-respawns like a bot.
- * Bots always auto-move / auto-respawn on the server.
+ * Live play shell — everyone auto-sims (local player + bots): auto-move and
+ * auto-respawn. Street MapLibre basemap; trails + dots lerp between polls.
  */
 export function GameScreen({
   state,
@@ -39,17 +35,14 @@ export function GameScreen({
   const lobby = state.lobby;
   const failCount = useRef(0);
   const lastFp = useRef("");
-  const dragBusy = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [startBusy, setStartBusy] = useState(false);
-
-  const autoSim = session.playControl === "auto_sim";
-  const manual = !autoSim;
 
   const you = useMemo(
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
     [lobby, session.seatId],
   );
+  void you;
 
   const remainingMs = Math.max(0, (lobby?.endsAtMs ?? nowMs) - nowMs);
 
@@ -83,13 +76,12 @@ export function GameScreen({
       }
     }
     refresh();
-    // Poll a bit faster than 1s so trails/positions stay fresh when bots tick at 200ms.
-    const id = setInterval(refresh, autoSim ? 400 : 700);
+    const id = setInterval(refresh, 400);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [session.code, pushLobby, dispatch, autoSim]);
+  }, [session.code, pushLobby, dispatch]);
 
   useEffect(() => {
     const sub = RNAppState.addEventListener("change", (next) => {
@@ -119,9 +111,8 @@ export function GameScreen({
     return () => clearTimeout(t);
   }, [state.screen, state.countdown, dispatch]);
 
-  // Auto sim only: drive the local seat like a bot (move + auto-respawn).
+  // Always auto-sim the local seat (move + plant/respawn like a bot).
   useEffect(() => {
-    if (!autoSim) return;
     if (!lobby || lobby.phase !== "live") return;
     if (state.countdown != null) return;
     const id = setInterval(() => {
@@ -138,7 +129,6 @@ export function GameScreen({
     }, 200);
     return () => clearInterval(id);
   }, [
-    autoSim,
     lobby?.phase,
     session.code,
     session.seatId,
@@ -146,84 +136,6 @@ export function GameScreen({
     dispatch,
     state.countdown,
   ]);
-
-  const onDragMove = useCallback(
-    (lat: number, lon: number) => {
-      if (!manual) return;
-      if (!lobby || lobby.phase !== "live") return;
-      if (state.countdown != null) return;
-      if (dragBusy.current) return;
-      dragBusy.current = true;
-      api
-        .fix(session.code, session.seatId, {
-          lat,
-          lon,
-          accuracyM: 5,
-          speedMps: 1.5,
-          clientTsMs: Date.now(),
-          mock: true,
-          // Manual drag never auto-plants — tap overlay to respawn.
-          plant: false,
-        })
-        .then((next) => {
-          pushLobby(next);
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          dragBusy.current = false;
-        });
-    },
-    [
-      manual,
-      lobby?.phase,
-      state.countdown,
-      session.code,
-      session.seatId,
-      pushLobby,
-    ],
-  );
-
-  async function spawn() {
-    if (!you?.respawnAt) {
-      try {
-        const next = await api.fix(session.code, session.seatId, {
-          lat: TEST_LOCATION.lat,
-          lon: TEST_LOCATION.lon,
-          accuracyM: 5,
-          speedMps: 0,
-          clientTsMs: Date.now(),
-          mock: true,
-          plant: true,
-        });
-        pushLobby(next);
-        dispatch({ type: "SPAWN_CONFIRMED" });
-      } catch (e) {
-        dispatch({ type: "FAIL", error: String(e) });
-      }
-      return;
-    }
-    try {
-      const at = you.respawnAt;
-      const next = await api.fix(session.code, session.seatId, {
-        lat: at.lat,
-        lon: at.lon,
-        accuracyM: 5,
-        speedMps: 0,
-        clientTsMs: Date.now(),
-        mock: true,
-        plant: true,
-      });
-      pushLobby(next);
-      dispatch({ type: "SPAWN_CONFIRMED" });
-      dispatch({
-        type: "SNACK",
-        text: "You're planted — claim inside the circle",
-        tone: "good",
-      });
-    } catch (e) {
-      dispatch({ type: "FAIL", error: String(e) });
-    }
-  }
 
   async function playAgain() {
     try {
@@ -268,19 +180,12 @@ export function GameScreen({
     );
   }
 
-  // Auto sim: no spawn gate — bots/human auto-plant. Manual: tap required.
-  const showSpawn = spawnOverlayVisible(state.screen, autoSim);
   const showResults = state.screen === "results";
   const showRematch = state.screen === "rematch_waiting";
 
   return (
     <View style={styles.root}>
-      <GameMap
-        lobby={lobby}
-        youId={session.seatId}
-        dragEnabled={manual && lobby.phase === "live" && state.countdown == null}
-        onDragMove={onDragMove}
-      />
+      <GameMap lobby={lobby} youId={session.seatId} />
 
       <PlayHud
         code={lobby.code}
@@ -299,13 +204,6 @@ export function GameScreen({
         active={state.screen === "countdown"}
         mountKey={state.mountKey}
         n={state.countdown}
-      />
-
-      <SpawnOverlay
-        active={showSpawn && state.screen !== "countdown"}
-        mountKey={state.mountKey}
-        wiped={state.screen === "death_respawn"}
-        onSpawn={spawn}
       />
 
       <ResultsOverlay
