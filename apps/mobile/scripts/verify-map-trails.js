@@ -134,25 +134,48 @@ function main() {
   let html = mod.buildMapHtml();
 
   if (process.env.VERIFY_TRAILS_BREAK === "1") {
-    // Self-check: removing the layer must make analyze() fail.
-    html = html
-      .replace(/TRAIL_LAYER_OK/g, "TRAIL_LAYER_GONE")
-      .replace(/id:'trails'/g, "id:'trails_removed'")
-      .replace(/id:"trails"/g, 'id:"trails_removed"');
-    let failed = false;
-    quietAssert = true;
-    try {
-      analyze(html);
-    } catch {
-      failed = true;
+    // Self-check: each sabotage must make analyze() fail.
+    const sabotages = [
+      {
+        name: "strip-layer",
+        apply: (h) =>
+          h
+            .replace(/TRAIL_LAYER_OK/g, "TRAIL_LAYER_GONE")
+            .replace(/id:'trails'/g, "id:'trails_removed'")
+            .replace(/id:"trails"/g, 'id:"trails_removed"'),
+      },
+      {
+        name: "width-zero",
+        apply: (h) =>
+          h
+            .replace(/TRAIL_CORE_WIDTH\s*=\s*[0-9.]+/, "TRAIL_CORE_WIDTH=0")
+            .replace(/TRAIL_CASE_WIDTH\s*=\s*[0-9.]+/, "TRAIL_CASE_WIDTH=0"),
+      },
+      {
+        name: "strip-setData",
+        apply: (h) =>
+          h.replace(
+            /getSource\(\s*['"]trails['"]\s*\)\.setData\([^)]*\)/g,
+            "/* trails setData removed */",
+          ),
+      },
+    ];
+    for (const s of sabotages) {
+      let failed = false;
+      quietAssert = true;
+      try {
+        analyze(s.apply(html));
+      } catch {
+        failed = true;
+      }
+      quietAssert = false;
+      assert(
+        failed,
+        `VERIFY_TRAILS_BREAK expected analyze() to fail for '${s.name}'`,
+      );
     }
-    quietAssert = false;
-    assert(
-      failed,
-      "VERIFY_TRAILS_BREAK=1 expected analyze() to fail after stripping trail layer",
-    );
     console.log(
-      "OK: verify-map-trails self-check — analyze fails when trail layer removed",
+      "OK: verify-map-trails self-check — analyze fails when layer removed / width 0 / setData stripped",
     );
     return;
   }

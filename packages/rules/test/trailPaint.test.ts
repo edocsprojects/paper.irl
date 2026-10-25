@@ -59,6 +59,21 @@ describe("trail paint payload", () => {
     expect(feat!.geometry.coordinates.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("fails the paint contract when trailing setData features are empty", () => {
+    // Mirrors CI: empty FeatureCollection while trailing must not pass.
+    const empty = buildTrailPaint([
+      { id: 7, mode: "trailing", trail: [], position: { lat: 1, lon: 2 } },
+    ]);
+    expect(empty.features.length).toBe(0);
+    expect(
+      empty.features.some(
+        (f) =>
+          f.geometry.type === "LineString" &&
+          f.geometry.coordinates.length >= 2,
+      ),
+    ).toBe(false);
+  });
+
   it("safe seats with empty trails produce no trail features", () => {
     const paint = buildTrailPaint([
       { id: 1, mode: "safe", trail: [], position: { lat: 1, lon: 2 } },

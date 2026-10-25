@@ -66,6 +66,37 @@ section("map trail render HTML (MapLibre layer, not payload-only)");
   ok("verify-map-trails + BREAK self-check");
 }
 
+section("trail paint payload (__paperPaint / setData LineString)");
+{
+  const paintProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-trail-paint-payload.js")],
+    { cwd: projectRoot, encoding: "utf8", env: process.env },
+  );
+  process.stdout.write(paintProbe.stdout || "");
+  process.stderr.write(paintProbe.stderr || "");
+  if (paintProbe.status !== 0) {
+    fail(`verify-trail-paint-payload exited ${paintProbe.status}`);
+  }
+  const paintBreak = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-trail-paint-payload.js")],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      env: { ...process.env, VERIFY_TRAIL_PAINT_BREAK: "1" },
+    },
+  );
+  process.stdout.write(paintBreak.stdout || "");
+  process.stderr.write(paintBreak.stderr || "");
+  if (paintBreak.status !== 0) {
+    fail(
+      `verify-trail-paint-payload BREAK exited ${paintBreak.status} (must fail when width=0 / setData stripped / features empty)`,
+    );
+  }
+  ok("verify-trail-paint-payload + BREAK (width0 / noSetData / emptyFeatures)");
+}
+
 section("static entry / native config");
 
 if (pkg.main !== "index.js") fail(`package.json main is ${pkg.main}, expected index.js`);

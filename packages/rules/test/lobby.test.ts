@@ -354,6 +354,46 @@ describe("plant trail bank cut wipe (freeplay)", () => {
     expect(seat.areaM2).toBeGreaterThan(500);
   });
 
+  it("leave home → open trail grows; return home → one territory, trail clears", () => {
+    const lobby = createLobby("LOOP", arena, { durationMs: 60_000 });
+    const { seat } = joinLobby(lobby, "A");
+    const t0 = 1_100_000;
+    startLobby(lobby, t0);
+    applyFix(
+      lobby,
+      seat.id,
+      fixAt(seat.respawnAt!.lat, seat.respawnAt!.lon, t0 + 1),
+      t0 + 1,
+    );
+    const home = seat.position!;
+    const areaBefore = seat.areaM2;
+
+    const out1 = fromLocalM(home.lat, home.lon, 45, 0);
+    applyFix(lobby, seat.id, fixAt(out1.lat, out1.lon, t0 + 2), t0 + 2);
+    expect(seat.mode).toBe("trailing");
+    expect(seat.trail.length).toBeGreaterThanOrEqual(2);
+    const lenAfterLeave = seat.trail.length;
+
+    const out2 = fromLocalM(home.lat, home.lon, 70, 25);
+    applyFix(lobby, seat.id, fixAt(out2.lat, out2.lon, t0 + 3), t0 + 3);
+    expect(seat.mode).toBe("trailing");
+    expect(seat.trail.length).toBeGreaterThan(lenAfterLeave);
+
+    // Close the loop back into starter disk.
+    for (const [x, y] of [
+      [40, 40],
+      [0, 40],
+      [0, 4],
+    ] as [number, number][]) {
+      const p = fromLocalM(home.lat, home.lon, x, y);
+      applyFix(lobby, seat.id, fixAt(p.lat, p.lon, t0 + 10 + x), t0 + 10 + x);
+    }
+    expect(seat.mode).toBe("safe");
+    expect(seat.trail.length).toBe(0);
+    expect(seat.owned.length).toBe(1);
+    expect(seat.areaM2).toBeGreaterThanOrEqual(areaBefore);
+  });
+
   it("plant:false near marker moves without planting (Manual drag)", () => {
     const lobby = createLobby("MAN", arena, { durationMs: 60_000 });
     const { seat } = joinLobby(lobby, "You");

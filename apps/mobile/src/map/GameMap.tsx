@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { WebView } from "react-native-webview";
-import { buildTrailPaint } from "@paper-irl/rules";
 import { buildMapHtml, MAP_HTML_REVISION } from "./mapHtml";
-import type { LobbyPayload, SeatView } from "../lib/api";
+import { buildPaperPaintMessage } from "./paintPayload";
+import type { LobbyPayload } from "../lib/api";
 
 type Props = {
   lobby: LobbyPayload;
@@ -31,31 +31,6 @@ export function mapFingerprint(lobby: LobbyPayload, youId: number): string {
   return `${lobby.arena.id}#${lobby.phase}#${seats}`;
 }
 
-function buildStateMessage(lobby: LobbyPayload, youId: number): string {
-  const seats = lobby.seats.map((s: SeatView) => ({
-    ...s,
-    you: s.id === youId,
-  }));
-  const trails = buildTrailPaint(
-    lobby.seats.map((s) => ({
-      id: s.id,
-      mode: s.mode,
-      trail: s.trail,
-      position: s.position,
-    })),
-  );
-  return JSON.stringify({
-    type: "state",
-    state: {
-      arena: lobby.arena,
-      mode: lobby.mode,
-      seats,
-      top3: lobby.top3,
-      trails,
-    },
-  });
-}
-
 /** Push lobby state into the WebView (injectJavaScript — reliable on iOS HTML). */
 function pushState(webRef: WebView | null, json: string) {
   if (!webRef) return;
@@ -80,7 +55,10 @@ export function GameMap({ lobby, youId }: Props) {
     if (fp === lastFp.current) return;
     lastFp.current = fp;
     if (!ready.current) return;
-    pushState(ref.current, buildStateMessage(lobby, youId));
+    pushState(
+      ref.current,
+      JSON.stringify(buildPaperPaintMessage(lobby, youId)),
+    );
   }, [lobby, youId]);
 
   return (
@@ -102,7 +80,9 @@ export function GameMap({ lobby, youId }: Props) {
             lastFp.current = mapFingerprint(lobbyRef.current, youRef.current);
             pushState(
               ref.current,
-              buildStateMessage(lobbyRef.current, youRef.current),
+              JSON.stringify(
+                buildPaperPaintMessage(lobbyRef.current, youRef.current),
+              ),
             );
           }
         } catch {
