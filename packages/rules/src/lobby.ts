@@ -95,12 +95,23 @@ export function createLobby(
   };
 }
 
+/**
+ * Add a seat. `allowLive` permits late join into a running match (long events):
+ * the seat starts in `joining`, and its first GPS fix assigns the nearest safe
+ * plant marker.
+ */
+/**
+ * Add a seat. `allowLive` permits late join into a running match: the seat
+ * starts in `joining` and its first GPS fix plants it where it stands.
+ * `bot` marks a server-simulated player.
+ */
 export function joinLobby(
   state: LobbyState,
   nickname: string,
-  opts?: { bot?: boolean },
+  opts?: { bot?: boolean; allowLive?: boolean },
 ): { seat: Seat; effects: Effect[] } {
-  if (state.phase !== "open") {
+  const lateJoin = opts?.allowLive === true && state.phase === "live";
+  if (state.phase !== "open" && !lateJoin) {
     throw new Error("lobby_not_open");
   }
   if (state.seats.size >= state.maxSeats) {
