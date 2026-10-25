@@ -110,190 +110,150 @@
         </div>
       </section>
 
-      <!-- Frame 4: choose location -->
-      <section class="screen" data-screen="location" hidden>
-        <header class="bar">
-          <button class="icon-btn" type="button" data-go="intro" aria-label="Back">‹</button>
-          <h2 class="bar-title">Location</h2>
-          <span class="icon-btn ghost"></span>
-        </header>
-        <label class="row-card">
-          <span>Share my location</span>
-          <input id="loc-toggle" class="switch" type="checkbox" />
-        </label>
-        <p id="loc-status" class="hint"></p>
-        <div class="panel location-list">
-          <button class="place" type="button" id="place-keller">
-            <span class="place-name">Keller Hall · UMN</span>
-            <span class="place-sub">200 Union St SE · create or join a game nearby</span>
-          </button>
-          <p class="hint center">More campuses coming soon</p>
-        </div>
-      </section>
-
-      <!-- Frame 2: home with live map → Create / Join -->
-      <section class="screen tabbed" data-screen="lobby" hidden>
-        <header class="bar">
-          <button class="icon-btn" type="button" data-go="location" aria-label="Change location">‹</button>
-          <div class="chips">
-            <button class="chip" type="button" data-tab="ranks">
-              <span class="chip-label">All-time Score</span>
-              <span class="chip-value" id="lobby-score">0 ft²</span>
-            </button>
-            <button class="chip" type="button" data-tab="ranks">
-              <span class="chip-label">Best Rank</span>
-              <span class="chip-value" id="lobby-rank">–</span>
-            </button>
+      <!-- Home: Create / Join (your flow, his look) -->
+      <section class="screen home" data-screen="home" hidden>
+        <div class="home-hero" id="home-hero"></div>
+        <div class="home-body">
+          <h1 class="home-title">paper.irl</h1>
+          <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
+          <div class="return-game hidden" id="return-game">
+            <span>Game in progress</span>
+            <button class="btn primary" type="button" id="btn-return">Back to game</button>
           </div>
-        </header>
-        <p class="limited" id="lobby-sub">Start a game here, or join a friend's code.</p>
-        <div class="map-slot live" id="slot-lobby">
-          <span class="live-tag" id="lobby-tag">Live map</span>
-          <p class="map-alert hidden" id="lobby-alert"></p>
-          <div class="feed" id="feed" aria-live="polite"></div>
-        </div>
-        <p class="notice hidden" id="claim-blocked">
-          Location is off, so you can't play with real GPS. Turn it on in
-          <button class="inline-link" type="button" data-tab="profile">Settings › Privacy</button>,
-          or switch to Simulation.
-        </p>
-        <div class="split home-actions">
           <button class="btn primary big" type="button" id="btn-create">Create game</button>
           <button class="btn big" type="button" id="btn-join">Join game</button>
-        </div>
-        <div class="soon-card">
-          <span class="soon-tag">Coming soon</span>
-          <strong>Events</strong>
-          <span>City-wide weekly claims with a live leaderboard.</span>
+          <div class="soon-card">
+            <span class="soon-tag">Coming soon</span>
+            <strong>Events</strong>
+            <span>City-wide weekly claims with a live leaderboard.</span>
+          </div>
         </div>
       </section>
 
-      <!-- Create a game -->
+      <!-- Create: config -->
       <section class="screen" data-screen="create" hidden>
         <header class="bar">
-          <button class="icon-btn" type="button" data-back aria-label="Back">‹</button>
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
           <h2 class="bar-title">Create game</h2>
           <span class="icon-btn ghost"></span>
         </header>
-        <p class="section-label">Zone size</p>
-        <div class="segmented" role="radiogroup" aria-label="Zone size">
+        <div class="coords-card">
+          <span class="tile-label" id="create-where">Arena centre · finding you…</span>
+          <strong id="create-coords">–</strong>
+        </div>
+        <p class="section-label">Radius</p>
+        <div class="segmented three" role="radiogroup" aria-label="Radius">
           <button type="button" role="radio" data-zone="600">600 ft</button>
           <button type="button" role="radio" data-zone="1000">1,000 ft</button>
           <button type="button" role="radio" data-zone="1600">1,600 ft</button>
         </div>
-        <p class="hint">The dashed circle around you. Smaller = more action.</p>
-        <p class="section-label">Players</p>
-        <div class="segmented" role="radiogroup" aria-label="Players">
+        <p class="section-label">Max players</p>
+        <div class="segmented three" role="radiogroup" aria-label="Max players">
           <button type="button" role="radio" data-max="4">4</button>
           <button type="button" role="radio" data-max="6">6</button>
           <button type="button" role="radio" data-max="8">8</button>
         </div>
         <p class="section-label">Match length</p>
-        <div class="segmented" role="radiogroup" aria-label="Match length">
+        <div class="segmented three" role="radiogroup" aria-label="Match length">
           <button type="button" role="radio" data-mins="5">5 min</button>
           <button type="button" role="radio" data-mins="10">10 min</button>
           <button type="button" role="radio" data-mins="15">15 min</button>
         </div>
-        <label class="setting-row" id="bots-row">
-          <span>Fill empty spots with bots</span>
-          <input id="bots-toggle" class="switch" type="checkbox" checked />
+        <label class="setting-row">
+          <span>Simulation</span>
+          <input id="sim-toggle" class="switch" type="checkbox" />
         </label>
-        <p class="hint" id="create-mode-hint"></p>
+        <div class="setting-block hidden" id="sim-speed">
+          <div class="speed-head">
+            <span>Speed</span>
+            <strong id="speed-value">1×</strong>
+          </div>
+          <input type="range" min="1" max="20" step="1" id="speed-range" aria-label="Simulation speed" />
+        </div>
+        <p class="hint" id="create-hint"></p>
         <button class="btn primary big" type="button" id="btn-create-go">Create</button>
       </section>
 
       <!-- Join with a code -->
       <section class="screen" data-screen="join" hidden>
         <header class="bar">
-          <button class="icon-btn" type="button" data-back aria-label="Back">‹</button>
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
           <h2 class="bar-title">Join game</h2>
           <span class="icon-btn ghost"></span>
         </header>
         <p class="section-label">Game code</p>
-        <input class="name-input code-input" id="join-code" maxlength="6" placeholder="ABC123"
+        <input class="name-input code-input" id="join-code" maxlength="6" placeholder="XXXXXX"
           autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Game code" />
-        <p class="hint" id="join-hint">Ask the host for the 6-letter code on their screen.</p>
-        <p class="notice hidden" id="join-sim">
-          Joining a friend needs <strong>Real GPS</strong> mode.
-          <button class="inline-link" type="button" data-tab="profile">Switch in Settings</button>.
-        </p>
+        <p class="hint">Ask the host for the 6-letter code on their lobby screen.</p>
         <button class="btn primary big" type="button" id="btn-join-go">Join</button>
       </section>
 
-      <!-- Waiting room -->
-      <section class="screen" data-screen="room" hidden>
+      <!-- Lobby card (waiting room) -->
+      <section class="screen" data-screen="lobby" hidden>
         <header class="bar">
-          <button class="icon-btn" type="button" id="btn-room-leave" aria-label="Leave">‹</button>
-          <h2 class="bar-title">Waiting room</h2>
           <span class="icon-btn ghost"></span>
+          <h2 class="bar-title" id="lobby-title">Lobby</h2>
+          <button class="link danger-link" type="button" id="btn-lobby-leave">Leave</button>
         </header>
         <div class="code-card">
-          <span class="tile-label">Game code</span>
-          <strong id="room-code">——————</strong>
-          <span class="hint">Friends join with this code</span>
+          <span class="tile-label" id="lobby-kind">Game code</span>
+          <strong id="lobby-code">——————</strong>
+          <span class="hint" id="lobby-meta"></span>
         </div>
-        <p class="section-label" id="room-count">Players</p>
-        <ol class="rank-list" id="room-list"></ol>
-        <p class="hint center" id="room-hint"></p>
-        <button class="btn primary big" type="button" id="btn-room-start">Start game</button>
+        <p class="section-label" id="lobby-count">Players</p>
+        <ol class="rank-list" id="lobby-list"></ol>
+        <p class="hint center" id="lobby-hint"></p>
+        <button class="btn primary big" type="button" id="btn-lobby-start">Start</button>
       </section>
 
-      <!-- Frame 3: playing -->
-      <section class="screen" data-screen="play" hidden>
-        <div class="map-slot tall" id="slot-play">
-          <div class="snacks" id="snacks" aria-live="polite"></div>
-          <div class="map-note" id="play-note"></div>
-          <div class="feed play-feed" id="play-feed" aria-live="polite"></div>
-          <span class="mode-chip" id="play-mode"></span>
-        </div>
-        <div class="stat-pill">
-          <span>Territory claimed</span><strong id="play-area">0 ft²</strong>
-        </div>
-        <div class="stat-pill">
-          <span>Time left</span><strong id="play-timer">0:00</strong>
-        </div>
-        <div class="split">
-          <button class="btn danger" type="button" id="btn-end">Leave</button>
-          <button class="btn" type="button" id="btn-pause">Pause</button>
-        </div>
-      </section>
-
-      <!-- Frame 5: done -->
-      <section class="screen" data-screen="done" hidden>
-        <div class="map-slot tall" id="slot-done">
-          <span class="live-tag">Your land</span>
-        </div>
-        <div class="split">
-          <div class="tile">
-            <span class="tile-label">Final score</span>
-            <strong id="done-score">0 ft²</strong>
+      <!-- Game: full-screen map + HUD -->
+      <section class="screen game" data-screen="game" hidden>
+        <div class="game-map" id="slot-game"></div>
+        <div class="hud">
+          <div class="hud-card hud-left">
+            <span class="hud-brand">paper.irl</span>
+            <ol class="hud-board" id="hud-board"></ol>
           </div>
-          <div class="tile">
-            <span class="tile-label">Time played</span>
-            <strong id="done-time">0:00</strong>
+          <div class="hud-card hud-right">
+            <strong class="hud-timer" id="hud-timer">0:00</strong>
+            <button class="hud-chip" type="button" id="btn-zoom">Zoom in</button>
+            <button class="hud-chip danger" type="button" id="btn-leave">Leave</button>
           </div>
         </div>
-        <p class="hint center" id="done-rank"></p>
-        <button class="btn primary big" type="button" id="btn-done">DONE</button>
+        <div class="kill-feed" id="kill-feed" aria-live="polite"></div>
+        <div class="respawn-hint hidden" id="respawn-hint">Respawn — head to your ring</div>
+        <div class="snackbar hidden" id="snackbar" role="status" aria-live="polite"></div>
+        <div class="countdown hidden" id="countdown"></div>
+        <div class="spawn-gate hidden" id="spawn-gate">
+          <div class="spawn-card">
+            <span class="tile-label">Match start</span>
+            <strong>Spawn here</strong>
+            <span class="hint">Your territory starts right where you're standing.</span>
+            <button class="btn primary big" type="button" id="btn-spawn">Tap to spawn</button>
+          </div>
+        </div>
       </section>
 
-      <!-- Frame 6: leaderboard -->
-      <section class="screen tabbed" data-screen="ranks" hidden>
+      <!-- Results -->
+      <section class="screen" data-screen="results" hidden>
         <header class="bar">
-          <h2 class="bar-title">Leaderboard</h2>
+          <span class="icon-btn ghost"></span>
+          <h2 class="bar-title">Lobby ended</h2>
+          <span class="icon-btn ghost"></span>
         </header>
-        <p class="limited" id="ranks-sub"></p>
-        <ol class="rank-list" id="rank-list"></ol>
-        <div class="grid-2">
-          <div class="tile"><span class="tile-label">Your Rank</span><strong id="r-rank">–</strong></div>
-          <div class="tile"><span class="tile-label">Score</span><strong id="r-score">0 ft²</strong></div>
-          <div class="tile"><span class="tile-label">All time rank</span><strong id="r-best">–</strong></div>
-          <div class="tile"><span class="tile-label">All time score</span><strong id="r-total">0 ft²</strong></div>
+        <p class="section-label">Top 3</p>
+        <ol class="rank-list" id="results-list"></ol>
+        <div class="split">
+          <div class="tile"><span class="tile-label">Your score</span><strong id="results-score">0 ft²</strong></div>
+          <div class="tile"><span class="tile-label">Your rank</span><strong id="results-rank">–</strong></div>
         </div>
+        <p class="hint center" id="results-hint"></p>
+        <button class="btn primary big" type="button" id="btn-again">Play again</button>
+        <button class="link" type="button" id="btn-results-leave">Leave</button>
       </section>
 
       <!-- Frame 7: settings tab (profile, theme, all-time stats) -->
-      <section class="screen tabbed" data-screen="profile" hidden>
+      <section class="screen tabbed" data-screen="settings" hidden>
         <header class="bar">
           <h2 class="bar-title">Settings</h2>
         </header>
@@ -312,20 +272,7 @@
           <input class="name-input" id="name-input" maxlength="20" placeholder="Your name" aria-label="Your name" />
           <button class="btn primary" type="submit" id="btn-save-name" disabled>Save</button>
         </form>
-
-        <p class="section-label">Game mode</p>
-        <div class="segmented" role="radiogroup" aria-label="Game mode">
-          <button type="button" role="radio" data-mode="gps">Real GPS</button>
-          <button type="button" role="radio" data-mode="demo">Simulation</button>
-        </div>
-        <div class="setting-block" id="speed-block">
-          <div class="speed-head">
-            <span>Simulation speed</span>
-            <strong id="speed-value">1×</strong>
-          </div>
-          <input type="range" min="1" max="20" step="1" id="speed-range" aria-label="Simulation speed" />
-          <p class="hint">1× is realistic jogging pace. Up to 20× fast-forwards the game.</p>
-        </div>
+        <p class="hint" id="name-hint"></p>
 
         <p class="section-label">Appearance</p>
         <label class="setting-row">
@@ -357,35 +304,14 @@
         <button class="link" type="button" id="btn-signout">Sign out</button>
       </section>
 
-      <!-- Frame 8: another player's profile -->
-      <section class="screen" data-screen="player" hidden>
-        <header class="bar">
-          <button class="icon-btn" type="button" data-back aria-label="Back">‹</button>
-          <h2 class="bar-title">Player</h2>
-          <span class="icon-btn ghost"></span>
-        </header>
-        <div class="profile-head">
-          <div class="avatar xl" id="p-avatar"></div>
-        </div>
-        <p class="player-name" id="p-name"></p>
-        <div class="split">
-          <div class="tile"><span class="tile-label">Current Rank</span><strong id="p-rank">–</strong></div>
-          <div class="tile"><span class="tile-label">Score</span><strong id="p-score">0 ft²</strong></div>
-        </div>
-      </section>
-
       <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-      <nav class="tabs" id="tabs" aria-label="Main" hidden>
-        <button class="tab" type="button" data-tab="lobby">
+      <nav class="tabs" id="tabs" aria-label="Main">
+        <button class="tab" type="button" data-tab="home">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" /></svg>
           Home
         </button>
-        <button class="tab" type="button" data-tab="ranks">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11h4v9zm6 0V4h4v16zm6 0v-6h4v6z" /></svg>
-          Ranks
-        </button>
-        <button class="tab" type="button" data-tab="profile">
+        <button class="tab" type="button" data-tab="settings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9m0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5" /></svg>
           Settings
         </button>

@@ -29,6 +29,7 @@ export interface LobbyPayload {
   serverNowMs?: number;
   seats: PublicSeat[];
   feed?: FeedEvent[];
+  rematchReady?: number[];
   notices?: (NoticeEvent & { kind?: string })[];
   pops?: { atMs: number; seatId: number; at: LatLon }[];
 }
@@ -46,6 +47,7 @@ export type CreateOpts = {
   radiusM: number;
   maxSeats: number;
   fillBots: boolean;
+  durationMs?: number;
 };
 
 /**
@@ -65,6 +67,8 @@ export class LiveMatch {
   outsideTracks: LatLon[][] = [];
   tracking = false;
   paused = false;
+  /** Tapped "Spawn": fixes may plant your base (respawns are then automatic). */
+  armed = false;
   /** Bumps on every new payload so the UI knows to repaint. */
   version = 0;
 
@@ -97,6 +101,7 @@ export class LiveMatch {
       centerLon: opts.center.lon,
       radiusM: Math.round(opts.radiusM),
       maxSeats: opts.maxSeats,
+      durationMs: opts.durationMs,
     })) as { code: string };
     await this.join(created.code, opts.name);
     this.isHost = true;
@@ -120,6 +125,32 @@ export class LiveMatch {
     if (!this.code) return;
     await this.request("POST", `/lobbies/${this.code}/start`, {});
     await this.refresh();
+  }
+
+  /** Play again with the same lobby: mark ready; the host starts the rematch. */
+  async playAgain() {
+    if (!this.code || this.seatId === null) return;
+    await this.request("POST", `/lobbies/${this.code}/rematch/ready`, { seatId: this.seatId });
+    if (this.isHost) await this.request("POST", `/lobbies/${this.code}/rematch/start`, { seatId: this.seatId });
+    this.armed = false;
+    await this.refresh();
+  }
+
+  /** Send the latest GPS fix right now (e.g. right after tapping Spawn). */
+  nudge() {
+    if (this.raw && !this.pendingFix && !this.sending) {
+      const p = this.raw;
+      void this.request("POST", `/lobbies/${this.code}/fix`, {
+        seatId: this.seatId,
+        fix: { lat: p.lat, lon: p.lon, accuracyM: 8, speedMps: 0, clientTsMs: Date.now(), plant: this.armed ? undefined : false },
+      })
+        .then((res) => {
+          this.accept(res);
+          const effects = (res as { effects?: Effect[] }).effects ?? [];
+          if (effects.length) this.onEffects(effects);
+        })
+        .catch((err) => this.fail(err));
+    }
   }
 
   leave() {
@@ -293,6 +324,7 @@ export class LiveMatch {
           accuracyM: pos.coords.accuracy,
           speedMps: speed ?? 0,
           clientTsMs: pos.timestamp,
+          plant: this.armed ? undefined : false,
         },
       });
       this.accept(res);

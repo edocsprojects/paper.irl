@@ -132,6 +132,12 @@ function boundaryGeoJson(arena: Arena) {
 }
 
 export type Camera = "arena" | "follow" | "yourLand";
+/** In-game zoom: "arena" fits the whole circle; "close" is street level. */
+export type ZoomMode = "arena" | "close";
+/** Metres per pixel at zoom 0 for MapLibre's 512-px tiles. */
+const MPP_Z0 = 78271.51696;
+/** "Zoom in" is this many levels closer than the whole-arena view. */
+const CLOSE_STEP = 1.4;
 
 const EMPTY = { type: "FeatureCollection" as const, features: [] };
 
@@ -141,6 +147,8 @@ export class GameMap {
   private map: maplibregl.Map;
   private arena: Arena;
   camera: Camera = "arena";
+  zoomMode: ZoomMode = "arena";
+  private lastFollow = 0;
   private bursts: { atMs: number; lat: number; lon: number; color: string; kind: "death" | "pop" }[] = [];
   private animating = false;
 
@@ -166,8 +174,22 @@ export class GameMap {
     await map.once("load");
     el.style.cssText = "";
     const view = new GameMap(el, map, arena);
+    view.declutter();
     view.addLayers();
     return view;
+  }
+
+  /** Strip everything that isn't the game: labels, POIs, bus stops, street names, icons. */
+  private declutter() {
+    for (const layer of this.map.getStyle().layers ?? []) {
+      const id = layer.id.toLowerCase();
+      if (
+        layer.type === "symbol" ||
+        /label|place|poi|transit|bus|railway|rail_|ferry|airport|housenumber|name|shield|station|aerialway/.test(id)
+      ) {
+        this.map.setLayoutProperty(layer.id, "visibility", "none");
+      }
+    }
   }
 
   private addLayers() {
@@ -223,21 +245,19 @@ export class GameMap {
       },
     });
 
-    // Open trails: player colour over a white casing so they read on any street.
+    // Open trails: dashed lines in the player's (darker) colour.
     map.addSource("trails", { type: "geojson", data: EMPTY });
-    map.addLayer({
-      id: "trails-casing",
-      type: "line",
-      source: "trails",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#ffffff", "line-width": 7.5, "line-opacity": 0.95 },
-    });
     map.addLayer({
       id: "trails",
       type: "line",
       source: "trails",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 4.2 },
+      layout: { "line-join": "round" },
+      paint: {
+        "line-color": ["get", "border"],
+        "line-width": 4,
+        "line-opacity": 0.95,
+        "line-dasharray": [1.6, 1.1],
+      },
     });
 
     // Your path outside the circle: shown, but never sent / scored.
@@ -299,6 +319,7 @@ export class GameMap {
     (this.map.getSource("boundary") as maplibregl.GeoJSONSource).setData(boundaryGeoJson(arena));
     this.clear();
     if (this.camera === "arena") this.fitArena();
+    if (this.camera === "follow") this.map.jumpTo({ zoom: this.followZoom() });
   }
 
   /** Move the map into a screen's slot and point the camera. */
@@ -306,14 +327,31 @@ export class GameMap {
     if (this.el.parentElement !== slot) slot.prepend(this.el);
     this.camera = camera;
     this.map.resize();
+    if (snap) this.setArena(snap.arena);
     if (camera === "arena" || !snap) {
       this.fitArena();
     } else if (camera === "yourLand") {
       this.fitYourLand(snap);
     } else {
-      this.map.jumpTo({ zoom: 16.4 });
+      this.map.jumpTo({ zoom: this.followZoom() });
       this.follow(snap, 0);
     }
+  }
+
+  setZoomMode(mode: ZoomMode, snap: SimSnapshot | null) {
+    this.zoomMode = mode;
+    if (this.camera !== "follow") return;
+    if (snap) this.follow(snap, 350);
+    else this.map.easeTo({ zoom: this.followZoom(), duration: 350 });
+  }
+
+  /** Zoom that fits the arena's diameter across the map's width (or street level). */
+  private followZoom(): number {
+    const w = Math.max(280, this.el.clientWidth || 400);
+    const mPerPx = (this.arena.radiusM * 2 * 1.08) / w;
+    const fit = Math.log2((MPP_Z0 * Math.cos((this.arena.centerLat * Math.PI) / 180)) / mPerPx);
+    const z = this.zoomMode === "close" ? fit + CLOSE_STEP : fit;
+    return Math.max(14, Math.min(19.5, z));
   }
 
   private fitArena() {
@@ -338,7 +376,13 @@ export class GameMap {
     (this.map.getSource("spawn") as maplibregl.GeoJSONSource).setData(spawnGeoJson(snap));
     (this.map.getSource("players") as maplibregl.GeoJSONSource).setData(playersGeoJson(snap, showYou));
     this.collectBursts(snap);
-    if (this.camera === "follow") this.follow(snap, 280);
+    if (this.camera === "follow") {
+      // Glide over the real gap between updates (per-frame in sim, ~2 Hz live).
+      const now = performance.now();
+      const gap = now - this.lastFollow;
+      this.lastFollow = now;
+      this.follow(snap, gap < 60 ? 0 : Math.min(600, gap));
+    }
   }
 
   private seenBurst = new Set<string>();
@@ -365,7 +409,7 @@ export class GameMap {
       const now = performance.now();
       const life = (b: (typeof this.bursts)[number]) => (b.kind === "death" ? DEATH_MS : POP_MS);
       this.bursts = this.bursts.filter((b) => now - b.atMs < life(b));
-      const mpp = (156543.03392 * Math.cos((this.arena.centerLat * Math.PI) / 180)) / 2 ** this.map.getZoom();
+      const mpp = (MPP_Z0 * Math.cos((this.arena.centerLat * Math.PI) / 180)) / 2 ** this.map.getZoom();
       (this.map.getSource("bursts") as maplibregl.GeoJSONSource).setData({
         type: "FeatureCollection",
         features: this.bursts.map((b) => {
@@ -403,7 +447,13 @@ export class GameMap {
     if (!you) return;
     const p = Number.isFinite(you.lat) ? you : you.respawnAt;
     if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return;
-    this.map.easeTo({ center: [p.lon, p.lat], duration, essential: true });
+    // Glide the zoom toward the current mode's level as we follow, so per-frame
+    // follows don't cancel a zoom change.
+    const want = this.followZoom();
+    const z = this.map.getZoom();
+    const zoom = Math.abs(want - z) < 0.01 ? want : z + (want - z) * (duration === 0 ? 0.12 : 1);
+    if (duration === 0) this.map.jumpTo({ center: [p.lon, p.lat], zoom });
+    else this.map.easeTo({ center: [p.lon, p.lat], zoom, duration, easing: (t) => t, essential: true });
   }
 
   private fitYourLand(snap: SimSnapshot) {

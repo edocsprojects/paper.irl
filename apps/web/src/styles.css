@@ -1169,3 +1169,384 @@ select {
   padding: 0.35rem 0.65rem;
   border-radius: 10px;
 }
+
+/* =========================================================================
+   Your app's flow in his look: Home / Create / Join / Lobby / Game / Results
+   ========================================================================= */
+
+/* Tabs (Home + Settings) are always visible; every screen but the intro
+   leaves room for them. */
+.tabs {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.screen:not(.intro) {
+  padding-bottom: calc(var(--tabs-h) + 1rem + env(safe-area-inset-bottom));
+}
+
+.phone.on-intro .tabs {
+  display: none;
+}
+
+/* Home */
+.screen.home {
+  padding: 0 0 calc(var(--tabs-h) + 1rem + env(safe-area-inset-bottom));
+  gap: 0;
+}
+
+.home-hero {
+  position: relative;
+  height: 38%;
+  min-height: 220px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.home-hero svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.home-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 45%;
+  background: linear-gradient(to bottom, transparent, var(--paper));
+}
+
+.home-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0 1rem;
+  margin-top: -1.5rem;
+  position: relative;
+}
+
+.home-title {
+  margin: 0;
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.home-copy {
+  margin: -0.4rem 0 0.4rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.return-game {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.6rem 0.6rem 1rem;
+  border-radius: 14px;
+  background: var(--surface);
+  font-weight: 700;
+}
+
+.return-game.hidden {
+  display: none;
+}
+
+/* Create */
+.coords-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.coords-card strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.setting-block.hidden {
+  display: none;
+}
+
+.danger-link {
+  color: var(--danger);
+  font-weight: 800;
+}
+
+/* Game: full-screen map with your HUD on top (above the tabs) */
+.screen.game {
+  padding: 0;
+  gap: 0;
+}
+
+.game-map {
+  position: absolute;
+  inset: 0 0 calc(var(--tabs-h) + env(safe-area-inset-bottom)) 0;
+}
+
+.game-map .map {
+  position: absolute;
+  inset: 0;
+}
+
+.hud {
+  position: absolute;
+  z-index: 4;
+  top: calc(0.75rem + env(safe-area-inset-top));
+  left: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.6rem;
+  align-items: stretch;
+  pointer-events: none;
+}
+
+.hud-card {
+  pointer-events: auto;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+  padding: 0.65rem 0.8rem;
+}
+
+.hud-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.hud-right {
+  width: 7.2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.hud-brand {
+  display: block;
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.3rem;
+}
+
+.hud-board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.hud-board li {
+  display: grid;
+  grid-template-columns: 0.9rem 0.6rem 1fr auto;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.hud-board .n {
+  color: var(--muted);
+}
+
+.hud-board .dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+}
+
+.hud-board .nm {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-board li.me .nm {
+  color: var(--accent);
+}
+
+.hud-board .pct {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-timer {
+  font-size: 1.4rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-chip {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hud-chip.danger {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.kill-feed {
+  position: absolute;
+  z-index: 4;
+  top: calc(8.6rem + env(safe-area-inset-top));
+  right: 0.75rem;
+  max-width: 78%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  pointer-events: none;
+}
+
+.kill-item {
+  padding: 0.35rem 0.7rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 0.78rem;
+  font-weight: 700;
+  animation: screen-in 0.2s ease-out;
+}
+
+.kill-item.mine {
+  outline: 2px solid var(--accent);
+}
+
+.kill-item i {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  margin: 0 0.35rem;
+  vertical-align: 0.05rem;
+}
+
+.respawn-hint,
+.snackbar {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 2rem);
+  padding: 0.7rem 1.1rem;
+  border-radius: 14px;
+  font-weight: 800;
+  font-size: 0.92rem;
+  text-align: center;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+
+.respawn-hint {
+  bottom: calc(var(--tabs-h) + 5.2rem + env(safe-area-inset-bottom));
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.snackbar {
+  bottom: calc(var(--tabs-h) + 1.2rem + env(safe-area-inset-bottom));
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--line);
+  transition: opacity 0.3s ease;
+}
+
+.snackbar.good {
+  border-color: var(--good);
+}
+
+.snackbar.bad {
+  border-color: var(--danger);
+}
+
+.snackbar.warn {
+  border-color: var(--accent);
+}
+
+.respawn-hint.hidden,
+.snackbar.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.respawn-hint.hidden {
+  display: none;
+}
+
+.countdown {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
+  color: #fff;
+  font-size: 7rem;
+  font-weight: 800;
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.35);
+}
+
+.countdown.hidden,
+.spawn-gate.hidden {
+  display: none;
+}
+
+.spawn-gate {
+  position: absolute;
+  z-index: 6;
+  inset: 0 0 calc(var(--tabs-h) + env(safe-area-inset-bottom)) 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+
+.spawn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 1.2rem;
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.spawn-card strong {
+  font-size: 1.6rem;
+}
+
+/* Lobby card slots */
+.rank-list li.open {
+  background: none;
+  border: 1px dashed var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.rank-list li .you-tag {
+  color: var(--accent);
+}

@@ -122,6 +122,12 @@ export class LocalMatch {
       joinLobby(this.state, `Player ${this.state.nextSeatId}`, { bot: true });
     }
     this.nowMs = Date.now();
+  }
+
+  /** Lobby → live (everyone spawns on their own ring slot). */
+  start() {
+    if (this.state.phase !== "open") return;
+    this.nowMs = Date.now();
     startLobby(this.state, this.nowMs);
   }
 
@@ -131,7 +137,7 @@ export class LocalMatch {
 
   /** Advance by `dtRealS` real seconds at `speed`×. Returns your effects. */
   advance(dtRealS: number, speed: number): Effect[] {
-    if (this.ended) return [];
+    if (this.state.phase !== "live") return [];
     this.acc += dtRealS * 1000 * speed;
     const out: Effect[] = [];
     let steps = 0;
