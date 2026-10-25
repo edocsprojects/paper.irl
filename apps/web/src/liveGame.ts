@@ -80,7 +80,30 @@ export class LiveMatch {
   private lastInside: LatLon | null = null;
   private lastSample: { p: LatLon; t: number } | null = null;
 
-  constructor(private onEffects: (effects: Effect[]) => void) {}
+  /** "lobby" = Create/Join games; "event" = the public Keller Hall event. */
+  kind: "lobby" | "event" = "lobby";
+  /** Event extras (winner of the last event). */
+  lastWinner: { name: string; areaM2: number } | null = null;
+
+  constructor(
+    private onEffects: (effects: Effect[]) => void,
+    private identity: () => Record<string, string> = () => ({}),
+  ) {}
+
+  /** Watch / play the public event (identified by guest id or Google token). */
+  async openEvent() {
+    this.leave();
+    this.kind = "event";
+    this.code = "EVENT";
+    await this.refresh();
+    this.startPolling();
+  }
+
+  async joinEvent(name: string) {
+    this.kind = "event";
+    this.accept(await this.request("POST", "/event/join", { name }));
+    this.armed = true; // event plants as soon as you're inside the circle
+  }
 
   get arena(): Arena | null {
     const a = this.payload?.arena;
@@ -160,6 +183,8 @@ export class LiveMatch {
     this.code = null;
     this.seatId = null;
     this.isHost = false;
+    this.kind = "lobby";
+    this.lastWinner = null;
     this.version++;
   }
 
@@ -179,7 +204,7 @@ export class LiveMatch {
   async refresh() {
     if (!this.code) return;
     try {
-      this.accept(await this.request("GET", `/lobbies/${this.code}`));
+      this.accept(await this.request("GET", this.kind === "event" ? "/event" : `/lobbies/${this.code}`));
     } catch (err) {
       this.fail(err);
     }
@@ -316,7 +341,8 @@ export class LiveMatch {
     }
     this.lastSample = { p, t: pos.timestamp };
     try {
-      const res = await this.request("POST", `/lobbies/${this.code}/fix`, {
+      const path = this.kind === "event" ? "/event/fix" : `/lobbies/${this.code}/fix`;
+      const res = await this.request("POST", path, {
         seatId: this.seatId,
         fix: {
           lat: p.lat,
@@ -339,6 +365,19 @@ export class LiveMatch {
   }
 
   private accept(payload: unknown) {
+    if (this.kind === "event") {
+      // Event payload: { nowMs, yourSeatId, lastResult, ... } → lobby shape.
+      const e = payload as LobbyPayload & {
+        nowMs?: number;
+        yourSeatId?: number | null;
+        lastResult?: { winner: { name: string; areaM2: number } | null } | null;
+      };
+      e.serverNowMs = e.nowMs;
+      e.durationMs = (e.endsAtMs ?? 0) - (e.startedAtMs ?? 0);
+      e.maxSeats = 500;
+      if (e.yourSeatId != null) this.seatId = e.yourSeatId;
+      this.lastWinner = e.lastResult?.winner ?? null;
+    }
     this.payload = payload as LobbyPayload;
     this.receivedAt = Date.now();
     this.serverError = null;
@@ -355,7 +394,7 @@ export class LiveMatch {
     try {
       res = await fetch(`${API}${path}`, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.identity() },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch {

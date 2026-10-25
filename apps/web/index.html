@@ -126,11 +126,13 @@
           </div>
           <button class="btn primary big" type="button" id="btn-create">Create game</button>
           <button class="btn big" type="button" id="btn-join">Join game</button>
-          <div class="soon-card">
-            <span class="soon-tag">Coming soon</span>
-            <strong>Community Events</strong>
-            <span>City-wide weekly claims with a live leaderboard.</span>
-          </div>
+          <button class="event-card" type="button" id="btn-events">
+            <span class="event-card-text">
+              <strong>Community Events</strong>
+              <span>Keller Hall · 7-day event</span>
+            </span>
+            <span class="event-card-go" aria-hidden="true">›</span>
+          </button>
         </div>
       </section>
 
@@ -163,8 +165,7 @@
           <button type="button" role="radio" data-mins="10">10 min</button>
           <button type="button" role="radio" data-mins="15">15 min</button>
         </div>
-        <p class="hint" id="create-hint"></p>
-        <button class="btn primary big" type="button" id="btn-create-go">Create</button>
+        <button class="btn primary big pin-bottom" type="button" id="btn-create-go">Create</button>
       </section>
 
       <!-- Join with a code -->
@@ -178,7 +179,7 @@
         <input class="name-input code-input" id="join-code" maxlength="6" placeholder="XXXXXX"
           autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Game code" />
         <p class="hint">Ask the host for the 6-letter code on their lobby screen.</p>
-        <button class="btn primary big" type="button" id="btn-join-go">Join</button>
+        <button class="btn primary big pin-bottom" type="button" id="btn-join-go">Join</button>
       </section>
 
       <!-- Lobby card (waiting room) -->
@@ -197,6 +198,30 @@
         <ol class="rank-list" id="lobby-list"></ol>
         <p class="hint center" id="lobby-hint"></p>
         <button class="btn primary big" type="button" id="btn-lobby-start">Start</button>
+      </section>
+
+      <!-- Community event: Keller Hall (teammate's event screen) -->
+      <section class="screen" data-screen="event" hidden>
+        <header class="bar">
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
+          <div class="chips">
+            <span class="chip">
+              <span class="chip-label">Your Score</span>
+              <span class="chip-value" id="event-score">0 ft²</span>
+            </span>
+            <span class="chip">
+              <span class="chip-label">Your Rank</span>
+              <span class="chip-value" id="event-rank">–</span>
+            </span>
+          </div>
+        </header>
+        <p class="limited"><strong>Keller Hall</strong> · 7-day event ends in <strong id="event-timer">–</strong></p>
+        <p class="winner hidden" id="event-winner"></p>
+        <div class="map-slot live" id="slot-event">
+          <p class="map-alert hidden" id="event-alert"></p>
+        </div>
+        <p class="hint center" id="event-hint"></p>
+        <button class="btn primary big" type="button" id="btn-claim">Let's Claim!!</button>
       </section>
 
       <!-- Game: full-screen map + HUD -->

@@ -1,5 +1,5 @@
-import { buildArena, KELLER, pointInTerritory, type Effect, type LatLon } from "@paper-irl/rules";
-import { authReady, initAuth, signInWithGoogle, signOut, type GoogleUser } from "./auth.js";
+import { buildArena, buildKellerArena, KELLER, pointInTerritory, type Effect, type LatLon } from "@paper-irl/rules";
+import { accessToken, authReady, initAuth, signInWithGoogle, signOut, type GoogleUser } from "./auth.js";
 import { LocalMatch, type SimSnapshot, type SimSnapshotSeat } from "./botSim.js";
 import { LiveMatch } from "./liveGame.js";
 import { GameMap } from "./mapView.js";
@@ -10,7 +10,26 @@ import "./styles.css";
  * Your app's flow (Home → Create/Join → Lobby → countdown → Game → Results)
  * in the teammate's design. Home + Settings tabs are always visible.
  */
-type Screen = "intro" | "home" | "create" | "join" | "lobby" | "game" | "results" | "settings";
+type Screen = "intro" | "home" | "create" | "join" | "lobby" | "event" | "game" | "results" | "settings";
+const EVENT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Compact HUD countdown for multi-day events: "6d 23h", else h:mm:ss. */
+function hudCountdown(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(sec / 86400);
+  if (d) return `${d}d ${Math.floor((sec % 86400) / 3600)}h`;
+  return formatCountdown(ms);
+}
+
+/** Event countdown: "6d 23:59:59". */
+function formatCountdown(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(sec / 86400);
+  const hms = [Math.floor((sec % 86400) / 3600), Math.floor((sec % 3600) / 60), sec % 60]
+    .map((n) => n.toString().padStart(2, "0"))
+    .join(":");
+  return d ? `${d}d ${hms}` : hms;
+}
 
 const FT_PER_M = 3.28084;
 const COUNTDOWN_STEP_MS = 700;
@@ -61,13 +80,23 @@ const isSim = () => profile.mode === "demo";
 /** The game you're in (lobby, countdown, playing or results). */
 type Session =
   | { kind: "sim"; match: LocalMatch; config: Config; center: LatLon }
-  | { kind: "live"; config: Config | null };
+  | { kind: "live"; config: Config | null }
+  /** Keller Hall community event: local bots in Simulation, the server event otherwise. */
+  | { kind: "event"; sim: LocalMatch | null };
 
 type Phase = "lobby" | "countdown" | "playing" | "results";
 
 async function main() {
   const map = await GameMap.create(buildArena());
-  const live = new LiveMatch((effects) => onYourEffects(effects));
+  const live = new LiveMatch(
+    (effects) => onYourEffects(effects),
+    (): Record<string, string> => {
+      const token = accessToken();
+      return token ? { Authorization: `Bearer ${token}` } : { "X-Guest-Id": profile.guestId };
+    },
+  );
+  /** Simulation's Keller event keeps running in the background once opened. */
+  let eventSim: LocalMatch | null = null;
 
   let screen: Screen = "intro";
   let session: Session | null = null;
@@ -92,11 +121,19 @@ async function main() {
   // ---------- helpers ----------
   function snap(): SimSnapshot | null {
     if (!session) return null;
-    return session.kind === "sim" ? session.match.snapshot() : live.snapshot();
+    if (session.kind === "sim") return session.match.snapshot();
+    if (session.kind === "event" && session.sim) return session.sim.snapshot();
+    return live.snapshot();
   }
 
-  const youId = () => (session?.kind === "sim" ? session.match.youId : live.seatId);
+  const youId = () =>
+    session?.kind === "sim"
+      ? session.match.youId
+      : session?.kind === "event" && session.sim
+        ? session.sim.youId
+        : live.seatId;
   const isHost = () => session?.kind === "sim" || live.isHost;
+  const inEvent = () => session?.kind === "event";
 
   function label(seat: { id: number; nickname: string }, you: number | null): string {
     return seat.id === you ? `${seat.nickname} (You)` : seat.nickname;
@@ -158,6 +195,11 @@ async function main() {
       const s = snap();
       map.mount($("slot-game"), "follow", s);
       if (s) map.update(s, true);
+    }
+    if (next === "event") {
+      const s = snap();
+      map.mount($("slot-event"), "arena", s);
+      if (s) map.update(s, phase === "playing");
     }
     paintUi(true);
   }
@@ -243,7 +285,65 @@ async function main() {
     });
   });
   $("btn-join").addEventListener("click", () => show("join"));
-  $("btn-return").addEventListener("click", () => show(phase === "lobby" ? "lobby" : phase === "results" ? "results" : "game"));
+  $("btn-return").addEventListener("click", () =>
+    show(phase === "lobby" ? "lobby" : phase === "results" ? "results" : "game"),
+  );
+
+  // ---------- Community event (Keller Hall) ----------
+  $("btn-events").addEventListener("click", async () => {
+    // Reuse the open event unless Settings switched Simulation / Real GPS.
+    if (session?.kind === "event" && !!session.sim === isSim()) {
+      show(phase === "playing" ? "game" : "event");
+      return;
+    }
+    leaveSession();
+    if (isSim()) {
+      if (!eventSim) {
+        eventSim = new LocalMatch({ arena: buildKellerArena(), youName: profile.name, players: 8, durationMs: EVENT_MS });
+        eventSim.youActive = false;
+        eventSim.start();
+      }
+      session = { kind: "event", sim: eventSim };
+    } else {
+      session = { kind: "event", sim: null };
+      try {
+        await live.openEvent();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : String(err));
+      }
+    }
+    phase = null;
+    show("event");
+  });
+
+  $("btn-claim").addEventListener("click", async () => {
+    if (session?.kind !== "event") return;
+    if (session.sim) {
+      session.sim.youActive = true;
+    } else {
+      if (!profile.useLocation) {
+        toast("Location is off. Turn it on in Settings › Privacy to claim.");
+        return;
+      }
+      try {
+        await live.joinEvent(profile.name);
+        live.startTracking();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
+    phase = "playing";
+    plantedOnce = false;
+    seen = { feed: 0, notice: 0, pop: 0 };
+    markSeen(snap());
+    raidAt.clear();
+    raidersInside = new Set();
+    leaderId = null;
+    warnedMinute = true; // a 7-day event doesn't need a 1-minute warning
+    $("kill-feed").innerHTML = "";
+    show("game");
+  });
 
   // ---------- Create ----------
   for (const attr of ["zone", "max", "mins"] as const) {
@@ -294,7 +394,7 @@ async function main() {
       return;
     }
     if (!profile.useLocation) {
-      toast("Location is off. Turn it on in Settings › Privacy, or use Simulation.");
+      toast("Location is off. Turn it on in Settings › Privacy.");
       return;
     }
     const btn = $<HTMLButtonElement>("btn-create-go");
@@ -382,7 +482,8 @@ async function main() {
   });
 
   function leaveSession() {
-    if (session?.kind === "live") live.leave();
+    if (session?.kind === "live" || (session?.kind === "event" && !session.sim)) live.leave();
+    if (session?.kind === "event" && session.sim) session.sim.youActive = false;
     session = null;
     phase = null;
     paused = false;
@@ -424,6 +525,14 @@ async function main() {
   });
 
   $("btn-leave").addEventListener("click", () => {
+    if (session?.kind === "event") {
+      // Stop playing but keep watching the event.
+      if (session.sim) session.sim.youActive = false;
+      else live.stopTracking();
+      phase = null;
+      show("event");
+      return;
+    }
     leaveSession();
     goHome();
   });
@@ -632,7 +741,7 @@ async function main() {
     if (screen === "home") {
       const inGame = !!session && phase !== null;
       $("return-game").classList.toggle("hidden", !inGame);
-      $("home-mode").textContent = isSim() ? `Simulation ${profile.demoSpeed}×` : "";
+      $("home-mode").textContent = "";
     }
 
     if (screen === "create") {
@@ -647,18 +756,16 @@ async function main() {
       pick("mins", config.mins);
       $("create-where").textContent = here ? "Arena centre · your location" : "Arena centre · Keller Hall (no GPS)";
       $("create-coords").textContent = formatLatLon(here ?? { lat: KELLER.lat, lon: KELLER.lon });
-      $("create-hint").textContent = isSim()
-        ? `Simulation (${profile.demoSpeed}×): bots fill every spot and you auto-walk. Change in Settings.`
-        : "Real GPS: real players only — share the code so friends can join.";
+
     }
 
     if (screen === "lobby") {
       const seats = s?.seats ?? [];
       const max = session?.kind === "sim" ? session.match.state.maxSeats : live.payload?.maxSeats ?? 8;
       const arena = s?.arena;
-      $("lobby-title").textContent = session?.kind === "sim" ? "Simulation lobby" : "Lobby";
-      $("lobby-kind").textContent = session?.kind === "sim" ? "Simulation" : "Game code";
-      $("lobby-code").textContent = session?.kind === "sim" ? `${(session.config.speed)}×` : s?.code ?? "——————";
+      $("lobby-title").textContent = "Lobby";
+      $("lobby-kind").textContent = "Game code";
+      $("lobby-code").textContent = s?.code ?? "——————";
       $("lobby-meta").textContent = arena
         ? `${formatLatLon({ lat: arena.centerLat, lon: arena.centerLon })} · ${formatFeet(arena.radiusM)} radius · max ${max}`
         : "";
@@ -677,6 +784,22 @@ async function main() {
           : "Waiting for the host to start…";
     }
 
+    if (screen === "event") {
+      const ranked = s ? [...s.seats].sort((a, b) => b.areaM2 - a.areaM2) : [];
+      const you = s?.you ?? null;
+      const rank = you && you.areaM2 > 0 ? ranked.findIndex((x) => x.id === you.id) + 1 : 0;
+      $("event-score").textContent = formatArea(phase === "playing" || (you?.areaM2 ?? 0) > 0 ? you?.areaM2 ?? 0 : 0);
+      $("event-rank").textContent = rank ? `#${rank}` : "–";
+      $("event-timer").textContent = s ? formatCountdown(s.remainingMs) : "–";
+      const winner = session?.kind === "event" && !session.sim ? live.lastWinner : null;
+      $("event-winner").classList.toggle("hidden", !winner);
+      if (winner) $("event-winner").innerHTML = `Last event winner: <strong>${escapeHtml(winner.name)}</strong> · ${formatArea(winner.areaM2)}`;
+      const err = session?.kind === "event" && !session.sim ? live.serverError : null;
+      $("event-alert").classList.toggle("hidden", !err);
+      if (err) $("event-alert").textContent = err;
+      $("event-hint").textContent = `${s?.seats.length ?? 0} players in this week's event`;
+    }
+
     if (screen === "game" && s) {
       const ranked = [...s.seats].sort((a, b) => b.areaM2 - a.areaM2).slice(0, 3);
       const arenaArea = Math.PI * s.arena.radiusM ** 2;
@@ -686,7 +809,7 @@ async function main() {
           return `<li class="${x.id === me ? "me" : ""}"><span class="n">${i + 1}</span><span class="dot" style="background:${x.color}"></span><span class="nm">${escapeHtml(label(x, me))}</span><span class="pct">${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%</span></li>`;
         })
         .join("");
-      $("hud-timer").textContent = formatMs(phase === "countdown" ? s.remainingMs : s.remainingMs);
+      $("hud-timer").textContent = inEvent() ? hudCountdown(s.remainingMs) : formatMs(s.remainingMs);
       $("btn-zoom").textContent = map.zoomMode === "arena" ? "Zoom in" : "Zoom out";
       const cd = phase === "countdown" ? Math.ceil((countdownEnd - now) / COUNTDOWN_STEP_MS) : 0;
       $("countdown").classList.toggle("hidden", cd <= 0);
@@ -779,6 +902,24 @@ async function main() {
       if (phase === "playing") observe(s);
       if (screen === "game") map.update(s, true);
       if (phase === "playing" && m.ended) endGame();
+    } else if (session?.kind === "event" && session.sim) {
+      const m = session.sim;
+      const effects = m.advance(dt, profile.demoSpeed);
+      if (effects.length) onYourEffects(effects);
+      const s = m.snapshot();
+      if (phase === "playing") observe(s);
+      if (screen === "game" || screen === "event") map.update(s, phase === "playing");
+    } else if (session?.kind === "event" && live.version !== lastLiveVersion) {
+      lastLiveVersion = live.version;
+      const s = live.snapshot();
+      if (s) {
+        if (phase === "playing") observe(s);
+        if (screen === "game" || screen === "event") {
+          map.update(s, phase === "playing");
+          if (phase === "playing") map.setOutsideTracks(live.outsideTracks);
+        }
+      }
+      paintUi(true);
     } else if (session?.kind === "live" && live.version !== lastLiveVersion) {
       lastLiveVersion = live.version;
       const s = live.snapshot();

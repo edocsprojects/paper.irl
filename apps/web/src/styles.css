@@ -1621,3 +1621,52 @@ select {
   margin: 0 0 0.2rem;
   text-align: center;
 }
+
+/* Primary action sits at the bottom of the usable area (above the tabs). */
+.btn.pin-bottom {
+  margin-top: auto;
+}
+
+.event-card {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.event-card:hover {
+  background: var(--surface);
+}
+
+.event-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.event-card-text span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.event-card-go {
+  font-size: 1.6rem;
+  color: var(--muted);
+}
+
+[data-screen="event"] .map-slot {
+  flex: 1;
+  min-height: 220px;
+}
