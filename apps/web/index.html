@@ -2,8 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>paper.irl — Keller Hall demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>paper.irl</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,52 +16,400 @@
     />
   </head>
   <body>
-    <div id="app">
-      <div id="map"></div>
+    <div id="app" class="phone">
+      <!-- Intro: illustrated campus map that fades into the sign-in buttons -->
+      <section class="screen intro" data-screen="intro">
+        <header class="intro-brand">paper.irl</header>
+        <svg class="intro-map loop-scene" viewBox="0 0 400 640" preserveAspectRatio="xMidYMin slice" aria-hidden="true">
+            <defs>
+              <g id="h-minor" fill="none" stroke-linecap="round">
+                <path d="M-10 70 H410 M-10 380 H410 M60 -10 V650 M330 -10 V650" />
+                <path d="M140 -10 Q150 120 120 200 T150 650" />
+                <path d="M200 70 Q260 120 330 110" />
+              </g>
+              <g id="h-major" fill="none" stroke-linecap="round">
+                <path d="M-20 330 L420 60" />
+              </g>
+              <path id="h-loop" d="M231 248 C 250 200, 300 168, 336 196 S 352 300, 300 316 S 238 312, 220 287" />
+            </defs>
+            <rect class="m-land" width="400" height="640" />
+            <path class="h-lake" d="M-20 300 Q60 280 110 330 Q150 380 120 470 Q100 560 140 660 L-20 660 Z" />
+            <circle class="m-park" cx="300" cy="96" r="58" />
+            <path class="m-park" d="M24 96 h80 a8 8 0 0 1 8 8 v70 a8 8 0 0 1 -8 8 h-80 a8 8 0 0 1 -8 -8 v-70 a8 8 0 0 1 8 -8z" />
+            <g class="m-building">
+              <rect x="8" y="8" width="44" height="52" rx="5" />
+              <rect x="70" y="8" width="58" height="52" rx="5" />
+              <rect x="160" y="8" width="56" height="52" rx="5" />
+              <rect x="346" y="8" width="46" height="52" rx="5" />
+              <rect x="160" y="84" width="34" height="56" rx="5" />
+              <rect x="346" y="80" width="46" height="70" rx="5" />
+              <rect x="70" y="200" width="44" height="60" rx="5" />
+              <rect x="346" y="240" width="46" height="60" rx="5" />
+              <rect x="176" y="330" width="70" height="40" rx="5" />
+              <rect x="260" y="330" width="56" height="40" rx="5" />
+              <rect x="176" y="396" width="140" height="40" rx="5" />
+              <rect x="346" y="396" width="46" height="40" rx="5" />
+            </g>
+            <use href="#h-minor" class="m-road-edge" stroke-width="12" />
+            <use href="#h-minor" class="m-road" stroke-width="8" />
+            <use href="#h-major" class="m-major-edge" stroke-width="20" />
+            <use href="#h-major" class="m-major" stroke-width="14" />
+            <circle class="m-boundary" cx="210" cy="230" r="196" />
 
-      <header class="chrome">
-        <div class="board" id="leaderboard" aria-label="Top 3"></div>
-        <div class="clock-wrap">
-          <span id="timer" class="timer">15:00</span>
+            <!-- Other players -->
+            <path class="t-fill" style="--t:#8b5cf6" d="M60 120 q34 -18 58 6 q12 34 -12 54 q-34 12 -52 -12 q-10 -28 6 -48z" />
+            <circle class="t-dot" style="--t:#8b5cf6" cx="112" cy="166" r="6" />
+            <path class="t-fill" style="--t:#14b8a6" d="M262 60 q40 -10 58 18 q8 34 -20 48 q-36 6 -46 -24 q-4 -26 8 -42z" />
+            <path class="t-trail" style="--t:#14b8a6" d="M300 124 q-10 40 -50 56" />
+            <circle class="t-dot" style="--t:#14b8a6" cx="250" cy="180" r="6" />
+            <circle class="h-ring" cx="80" cy="360" r="26" />
+            <circle class="t-dot h-ghost" style="--t:#ec4899" cx="96" cy="388" r="6" />
+
+            <!-- You: land, the loop being drawn, then the claim filling in -->
+            <path class="t-fill h-land" style="--t:#e85d04" d="M150 214 q46 -24 74 14 q16 40 -12 66 q-40 18 -68 -10 q-18 -36 6 -70z" />
+            <path class="t-fill h-merged" style="--t:#e85d04" d="M150 214 C 182 194, 220 194, 246 204 C 278 182, 316 174, 336 196 S 352 300, 300 316 S 236 314, 216 296 C 196 310, 166 304, 144 284 C 128 252, 132 228, 150 214 Z" />
+            <path class="t-trail h-trail" style="--t:#e85d04" d="" />
+            <circle class="t-dot h-runner" style="--t:#e85d04" r="9" cx="231" cy="248" />
+          </svg>
+
+        <div class="intro-body">
+          <div class="intro-fade">
+            <h1 class="intro-title">GO CLAIM your territory!</h1>
+          </div>
+          <div class="intro-actions">
+            <button class="btn-brand google" type="button" data-signin="google">
+              <svg viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+              </svg>
+              Continue with Google
+            </button>
+            <button class="btn-brand apple" type="button" data-signin="apple">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+              </svg>
+              Continue with Apple
+            </button>
+            <button class="link" type="button" data-signin="guest">Continue as a guest</button>
+          </div>
         </div>
-      </header>
+      </section>
 
-      <div id="snacks" class="snacks" aria-live="polite"></div>
+      <!-- Home: brand top-left, map in the middle, actions at the bottom -->
+      <section class="screen home" data-screen="home" hidden>
+        <header class="home-bar">
+          <span class="home-brand">paper.irl</span>
+          <span class="home-mode" id="home-mode"></span>
+        </header>
+        <div class="home-hero" id="home-hero">
+          <!-- Teammate's campus art, framed on the territories. -->
+          <svg class="home-map" viewBox="0 120 400 460" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <defs>
+            <g id="hm-minor-roads" fill="none" stroke-linecap="round">
+              <path d="M-10 120 H410 M-10 260 H340 M-10 560 H330 M-10 700 H350" />
+              <path d="M70 -10 V870 M290 -10 V720 M230 260 V420 M120 560 V870" />
+              <path d="M-10 505 Q120 470 230 420 M170 700 Q230 760 300 870" />
+            </g>
+            <g id="hm-major-roads" fill="none" stroke-linecap="round">
+              <path d="M-10 420 H360" />
+              <path d="M170 -10 V870" />
+            </g>
+          </defs>
+          <rect class="m-land" width="400" height="860" />
+          <path class="m-park" d="M84 136 h72 a8 8 0 0 1 8 8 v100 a8 8 0 0 1 -8 8 h-72 a8 8 0 0 1 -8 -8 v-100 a8 8 0 0 1 8 -8z" />
+          <path class="m-park" d="M184 574 q50 -10 92 6 q8 50 -10 104 q-46 8 -82 -4 q-10 -50 0 -106z" />
+          <path class="m-park" d="M8 714 q40 -6 54 10 q4 60 -6 120 q-30 6 -48 -2z" />
+          <path class="m-water" d="M372 -20 C330 120 400 220 356 360 S330 600 372 720 S350 860 360 900" />
+          <g class="m-building">
+            <rect x="10" y="10" width="48" height="40" rx="5" />
+            <rect x="10" y="62" width="48" height="46" rx="5" />
+            <rect x="82" y="12" width="76" height="38" rx="5" />
+            <rect x="82" y="62" width="34" height="46" rx="5" />
+            <rect x="124" y="62" width="34" height="46" rx="5" />
+            <rect x="182" y="12" width="96" height="44" rx="5" />
+            <rect x="182" y="68" width="44" height="40" rx="5" />
+            <rect x="234" y="68" width="44" height="40" rx="5" />
+            <rect x="10" y="134" width="48" height="56" rx="5" />
+            <rect x="10" y="200" width="48" height="48" rx="5" />
+            <rect x="182" y="134" width="96" height="52" rx="5" />
+            <rect x="182" y="198" width="60" height="50" rx="5" />
+            <rect x="10" y="274" width="48" height="66" rx="5" />
+            <rect x="82" y="274" width="76" height="40" rx="5" />
+            <rect x="82" y="324" width="76" height="40" rx="5" />
+            <rect x="182" y="274" width="38" height="70" rx="5" />
+            <rect x="242" y="274" width="38" height="60" rx="5" />
+            <rect x="242" y="346" width="38" height="60" rx="5" />
+            <rect x="10" y="436" width="48" height="44" rx="5" />
+            <rect x="82" y="436" width="76" height="30" rx="5" />
+            <rect x="182" y="440" width="96" height="48" rx="5" />
+            <rect x="182" y="500" width="96" height="48" rx="5" />
+            <rect x="10" y="574" width="48" height="56" rx="5" />
+            <rect x="82" y="574" width="76" height="52" rx="5" />
+            <rect x="82" y="636" width="76" height="52" rx="5" />
+            <rect x="10" y="642" width="48" height="46" rx="5" />
+            <rect x="132" y="714" width="28" height="60" rx="5" />
+            <rect x="182" y="716" width="40" height="40" rx="5" />
+            <rect x="82" y="714" width="28" height="80" rx="5" />
+          </g>
+          <use href="#hm-minor-roads" class="m-road-edge" stroke-width="12" />
+          <use href="#hm-minor-roads" class="m-road" stroke-width="8" />
+          <use href="#hm-major-roads" class="m-major-edge" stroke-width="18" />
+          <use href="#hm-major-roads" class="m-major" stroke-width="13" />
+          <circle class="m-boundary" cx="185" cy="360" r="190" />
 
-      <div id="spawn" class="spawn hidden" role="dialog" aria-modal="true">
-        <div class="spawn-card">
-          <p class="spawn-kicker" id="spawn-kicker">Match start</p>
-          <h1 id="spawn-title">Ready to plant</h1>
-          <p class="spawn-copy" id="spawn-copy">
-            Drop onto your marker and claim freehand territory inside the Keller Hall circle.
-          </p>
-          <button id="btn-spawn" type="button">Spawn</button>
+          <path class="t-fill" style="--t:#e85d04" d="M96 300 q30 -26 66 -10 q30 20 20 58 q-14 34 -52 30 q-40 -6 -44 -40 q-2 -24 10 -38z" />
+          <path class="t-fill" style="--t:#14b8a6" d="M214 150 q40 -12 62 14 q14 30 -6 54 q-30 18 -58 2 q-20 -26 2 -70z" />
+          <path class="t-fill" style="--t:#8b5cf6" d="M40 440 q34 -16 60 6 q16 36 -8 60 q-32 14 -54 -10 q-14 -30 2 -56z" />
+          <path class="t-fill" style="--t:#ec4899" d="M226 470 q36 -8 50 22 q4 36 -26 46 q-34 2 -40 -28 q-2 -28 16 -40z" />
+          <path class="t-trail" style="--t:#e85d04" d="M184.1 337.4 Q202.6 348.6 214 370 Q230 400 264 398 Q294 394 304 364" />
+          <path class="t-trail" style="--t:#14b8a6" d="M220.1 223.9 Q207.7 248.4 216 270 Q226 296 186 310" />
+          <circle class="t-dot" style="--t:#e85d04" cx="304" cy="364" r="9" />
+          <circle class="t-dot" style="--t:#14b8a6" cx="186" cy="310" r="7" />
+          <circle class="t-dot" style="--t:#8b5cf6" cx="98" cy="470" r="7" />
+          <circle class="t-dot" style="--t:#ec4899" cx="252" cy="500" r="7" />
+        </svg>
         </div>
-      </div>
-
-      <div id="ended" class="spawn hidden" role="dialog" aria-modal="true">
-        <div class="spawn-card">
-          <p class="spawn-kicker">Time’s up</p>
-          <h1>Final top 3</h1>
-          <ol id="final-top" class="final-top"></ol>
-          <button id="btn-restart" type="button">Play again</button>
+        <div class="home-actions">
+          <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
+          <div class="return-game hidden" id="return-game">
+            <span>Game in progress</span>
+            <button class="btn primary" type="button" id="btn-return">Back to game</button>
+          </div>
+          <button class="btn primary big" type="button" id="btn-create">Create game</button>
+          <button class="btn big" type="button" id="btn-join">Join game</button>
+          <button class="btn big events-btn" type="button" id="btn-events">Community Events</button>
         </div>
-      </div>
+      </section>
 
-      <div class="demo-bar">
-        <button id="btn-play" type="button">Pause</button>
-        <label class="speed">
-          Speed
-          <select id="speed">
-            <option value="15">15×</option>
-            <option value="30" selected>30×</option>
-            <option value="60">60×</option>
-            <option value="120">120×</option>
-          </select>
+      <!-- Create: config -->
+      <section class="screen" data-screen="create" hidden>
+        <header class="bar">
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
+          <h2 class="bar-title">Create game</h2>
+          <span class="icon-btn ghost"></span>
+        </header>
+        <div class="coords-card">
+          <span class="tile-label" id="create-where">Arena centre · finding you…</span>
+          <strong id="create-coords">–</strong>
+        </div>
+        <p class="section-label">Radius</p>
+        <div class="segmented three" role="radiogroup" aria-label="Radius">
+          <button type="button" role="radio" data-zone="500">500 ft</button>
+          <button type="button" role="radio" data-zone="1000">1,000 ft</button>
+          <button type="button" role="radio" data-zone="1500">1,500 ft</button>
+        </div>
+        <p class="section-label">Max players</p>
+        <div class="segmented three" role="radiogroup" aria-label="Max players">
+          <button type="button" role="radio" data-max="4">4</button>
+          <button type="button" role="radio" data-max="6">6</button>
+          <button type="button" role="radio" data-max="8">8</button>
+        </div>
+        <p class="section-label">Match length</p>
+        <div class="segmented three" role="radiogroup" aria-label="Match length">
+          <button type="button" role="radio" data-mins="5">5 min</button>
+          <button type="button" role="radio" data-mins="10">10 min</button>
+          <button type="button" role="radio" data-mins="15">15 min</button>
+        </div>
+        <button class="btn primary big pin-bottom" type="button" id="btn-create-go">Create</button>
+      </section>
+
+      <!-- Join with a code -->
+      <section class="screen" data-screen="join" hidden>
+        <header class="bar">
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
+          <h2 class="bar-title">Join game</h2>
+          <span class="icon-btn ghost"></span>
+        </header>
+        <p class="section-label">Game code</p>
+        <input class="name-input code-input" id="join-code" maxlength="6" placeholder="XXXXXX"
+          autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Game code" />
+        <p class="hint">Ask the host for the 6-letter code on their lobby screen.</p>
+        <button class="btn primary big pin-bottom" type="button" id="btn-join-go">Join</button>
+      </section>
+
+      <!-- Lobby card (waiting room) -->
+      <section class="screen" data-screen="lobby" hidden>
+        <header class="bar">
+          <span class="icon-btn ghost"></span>
+          <h2 class="bar-title" id="lobby-title">Lobby</h2>
+          <button class="link danger-link" type="button" id="btn-lobby-leave">Leave</button>
+        </header>
+        <div class="code-card">
+          <span class="tile-label" id="lobby-kind">Game code</span>
+          <strong id="lobby-code">——————</strong>
+          <span class="hint" id="lobby-meta"></span>
+        </div>
+        <p class="section-label" id="lobby-count">Players</p>
+        <ol class="rank-list" id="lobby-list"></ol>
+        <p class="hint center" id="lobby-hint"></p>
+        <button class="btn primary big" type="button" id="btn-lobby-start">Start</button>
+      </section>
+
+      <!-- Community events list -->
+      <section class="screen" data-screen="events" hidden>
+        <header class="bar">
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
+          <h2 class="bar-title">Community Events</h2>
+          <span class="icon-btn ghost"></span>
+        </header>
+        <div class="panel location-list">
+          <button class="place" type="button" id="event-keller">
+            <span class="place-name">Keller Hall · UMN</span>
+            <span class="place-sub">200 Union St SE · 7-day event · 1,640 ft zone</span>
+          </button>
+          <p class="hint center">More events coming soon</p>
+        </div>
+      </section>
+
+      <!-- Community event: Keller Hall (teammate's event screen) -->
+      <section class="screen" data-screen="event" hidden>
+        <header class="bar">
+          <button class="icon-btn" type="button" data-go="events" aria-label="Back">‹</button>
+          <div class="chips">
+            <span class="chip">
+              <span class="chip-label">Your Score</span>
+              <span class="chip-value" id="event-score">0 ft²</span>
+            </span>
+            <span class="chip">
+              <span class="chip-label">Your Rank</span>
+              <span class="chip-value" id="event-rank">–</span>
+            </span>
+          </div>
+        </header>
+        <p class="limited"><strong>Keller Hall</strong> · 7-day event ends in <strong id="event-timer">–</strong></p>
+        <p class="winner hidden" id="event-winner"></p>
+        <div class="map-slot live" id="slot-event">
+          <p class="map-alert hidden" id="event-alert"></p>
+        </div>
+        <p class="hint center" id="event-hint"></p>
+        <button class="btn primary big" type="button" id="btn-claim">Let's Claim!!</button>
+      </section>
+
+      <!-- Game: full-screen map + HUD -->
+      <section class="screen game" data-screen="game" hidden>
+        <div class="game-map" id="slot-game"></div>
+        <div class="hud">
+          <div class="hud-card hud-left">
+            <span class="hud-brand">paper.irl</span>
+            <ol class="hud-board" id="hud-board"></ol>
+          </div>
+          <div class="hud-card hud-right">
+            <strong class="hud-timer" id="hud-timer">0:00</strong>
+            <button class="hud-chip" type="button" id="btn-zoom">Zoom in</button>
+            <button class="hud-chip danger" type="button" id="btn-leave">Leave</button>
+          </div>
+        </div>
+        <div class="kill-feed" id="kill-feed" aria-live="polite"></div>
+        <div class="snackbar hidden" id="snackbar" role="status" aria-live="polite"></div>
+        <div class="countdown hidden" id="countdown"></div>
+        <div class="spawn-gate hidden" id="spawn-gate">
+          <div class="spawn-card">
+            <span class="tile-label">Match start</span>
+            <strong>Spawn here</strong>
+            <span class="hint">Your territory starts right where you're standing.</span>
+            <button class="btn primary big" type="button" id="btn-spawn">Tap to spawn</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Results -->
+      <section class="screen" data-screen="results" hidden>
+        <header class="bar">
+          <span class="icon-btn ghost"></span>
+          <h2 class="bar-title">Lobby ended</h2>
+          <span class="icon-btn ghost"></span>
+        </header>
+        <p class="section-label">Leaderboard</p>
+        <ol class="rank-list" id="results-list"></ol>
+        <div class="split">
+          <div class="tile"><span class="tile-label">Your score</span><strong id="results-score">0 ft²</strong></div>
+          <div class="tile"><span class="tile-label">Your rank</span><strong id="results-rank">–</strong></div>
+        </div>
+        <p class="hint center" id="results-hint"></p>
+        <button class="btn primary big" type="button" id="btn-again">Play again</button>
+        <button class="link" type="button" id="btn-results-leave">Leave</button>
+      </section>
+
+      <!-- Frame 7: settings tab (profile, theme, all-time stats) -->
+      <section class="screen tabbed" data-screen="settings" hidden>
+        <header class="bar">
+          <h2 class="bar-title">Settings</h2>
+        </header>
+        <div class="profile-head">
+          <label class="avatar-edit" title="Change profile picture">
+            <span class="avatar xl" id="me-avatar"></span>
+            <span class="change-photo">Change photo</span>
+            <input type="file" accept="image/*" id="photo-input" hidden />
+          </label>
+          <p class="saved-name" id="saved-name"></p>
+          <p class="account-line" id="account-line"></p>
+        </div>
+
+        <p class="section-label">Name</p>
+        <form class="name-row" id="name-form">
+          <input class="name-input" id="name-input" maxlength="20" placeholder="Your name" aria-label="Your name" />
+          <button class="btn primary" type="submit" id="btn-save-name" disabled>Save</button>
+        </form>
+        <p class="hint" id="name-hint"></p>
+
+        <p class="section-label">Game mode</p>
+        <div class="segmented" role="radiogroup" aria-label="Game mode">
+          <button type="button" role="radio" data-mode="gps">Real GPS</button>
+          <button type="button" role="radio" data-mode="demo">Simulation</button>
+        </div>
+        <div class="setting-block" id="sim-speed">
+          <div class="speed-head">
+            <span>Simulation speed</span>
+            <strong id="speed-value">1×</strong>
+          </div>
+          <input type="range" min="1" max="20" step="1" id="speed-range" aria-label="Simulation speed" />
+          <p class="hint">Simulation: bots fill the game and you auto-walk. 1× is jogging pace.</p>
+        </div>
+
+        <p class="section-label">Appearance</p>
+        <label class="setting-row">
+          <span>Dark theme</span>
+          <input id="theme-toggle" class="switch" type="checkbox" />
         </label>
-      </div>
 
-      <footer class="attr">© OpenStreetMap · OpenFreeMap · demo</footer>
+        <p class="section-label">All-time stats</p>
+        <div class="grid-2" id="stats"></div>
+
+        <p class="section-label">Privacy</p>
+        <label class="setting-row">
+          <span>Share my location</span>
+          <input id="privacy-loc" class="switch" type="checkbox" />
+        </label>
+        <p class="notice hidden" id="privacy-warning">
+          Location is off: you won't be part of the game. Your runs won't claim territory or
+          count on the leaderboard, but you can still watch the live map.
+        </p>
+        <details class="setting-details">
+          <summary>How your location is used</summary>
+          <p>
+            Your location is only sent while you're in a game, and only inside the
+            dashed circle. Anything outside the circle stays on your phone, is shown just to
+            you, and never counts toward your rank. Other players see your position on the
+            live map during play.
+          </p>
+        </details>
+        <button class="link" type="button" id="btn-signout">Sign out</button>
+      </section>
+
+      <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+
+      <nav class="tabs" id="tabs" aria-label="Main">
+        <button class="tab" type="button" data-tab="home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" /></svg>
+          Home
+        </button>
+        <button class="tab" type="button" data-tab="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9m0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5" /></svg>
+          Settings
+        </button>
+      </nav>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

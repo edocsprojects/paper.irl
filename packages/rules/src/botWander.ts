@@ -16,8 +16,14 @@ import type { Effect, LatLon, LobbyState, Seat, SeatId } from "./types.js";
 type RaidPlan = {
   goal: LatLon;
   home: LatLon;
-  minTrail: number;
   leashM: number;
+  /**
+   * The loop this raid walks: waypoints on an arc around home. Most raids
+   * are modest bites; some are bold sweeps that enclose a lot of land (and
+   * leave a long trail to cut) — paper.io's risk/reward.
+   */
+  loop: LatLon[];
+  loopIdx: number;
   /** Committed hunt (a coin flip per tick between two targets = jitter in place). */
   huntId: SeatId | null;
   huntUntilMs: number;
@@ -27,6 +33,35 @@ type RaidPlan = {
 };
 
 const HUNT_COMMIT_MS = 5000;
+/** Share of raids that are big, greedy loops. */
+const BOLD_RAID_CHANCE = 0.35;
+/** Spacing between loop waypoints (m). */
+const LOOP_STEP_M = 14;
+
+/**
+ * Waypoints on an arc around home: radius + sweep pick how much land the
+ * loop will enclose when the bot walks back in.
+ */
+function planLoop(state: LobbyState, home: LatLon, leashM: number, rand: () => number): LatLon[] {
+  const bold = rand() < BOLD_RAID_CHANCE;
+  const maxR = Math.max(24, Math.min(leashM * 0.8, state.arena.radiusM * 0.45));
+  const r = bold
+    ? Math.min(maxR, 45 + rand() * 50) // big sweep: 45–95 m out
+    : Math.min(maxR, 24 + rand() * 18); // modest bite: 24–42 m out
+  const sweep = bold
+    ? ((200 + rand() * 120) * Math.PI) / 180 // 200–320°
+    : ((90 + rand() * 90) * Math.PI) / 180; // 90–180°
+  const dir = rand() < 0.5 ? 1 : -1;
+  const a0 = rand() * Math.PI * 2;
+  const n = Math.max(3, Math.ceil((r * sweep) / LOOP_STEP_M));
+  const inner = { ...state.arena, radiusM: state.arena.radiusM - 6 };
+  const pts: LatLon[] = [];
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + dir * (sweep * i) / n;
+    pts.push(clampToArena(inner, fromLocalM(home.lat, home.lon, Math.cos(a) * r, Math.sin(a) * r)));
+  }
+  return pts;
+}
 const STUCK_WINDOW_MS = 6000;
 const STUCK_MIN_M = 4;
 
@@ -225,11 +260,13 @@ function ensureRaid(
       state.arena.radiusM,
       Math.max(110, Number.isFinite(nearest) ? nearest * 0.85 : 110),
     );
+    const loop = planLoop(state, home, leashM, rand);
     plan = {
       home,
-      goal: pickLocalGoal(state, seat, home, rand, leashM),
-      minTrail: 12 + Math.floor(rand() * 14),
+      goal: loop[0]!,
       leashM,
+      loop,
+      loopIdx: 0,
       huntId: null,
       huntUntilMs: 0,
       checkAt: { ...pos },
@@ -239,7 +276,9 @@ function ensureRaid(
   }
   if (nowMs - plan.checkMs >= STUCK_WINDOW_MS) {
     if (haversineM(plan.checkAt.lat, plan.checkAt.lon, pos.lat, pos.lon) < STUCK_MIN_M) {
-      plan.goal = pickLocalGoal(state, seat, home, rand, plan.leashM);
+      // Stuck: skip ahead on the loop (or go home if it's done).
+      plan.loopIdx = Math.min(plan.loop.length, plan.loopIdx + 1);
+      plan.goal = plan.loop[plan.loopIdx] ?? pickLocalGoal(state, seat, home, rand, plan.leashM);
       plan.huntId = null;
     }
     plan.checkAt = { ...pos };
@@ -339,7 +378,7 @@ function wanderStep(
   if (seat.mode === "safe" && seat.owned.length) {
     const plan = ensureRaid(state, seat, pos, rand, nowMs);
     // Sometimes exit toward someone's open trail (committed for a few s).
-    const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.04);
+    const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.07);
     if (hunt) return stepToward(state, seat, pos, hunt, rand, nowMs);
     return stepToward(state, seat, pos, plan.goal, rand, nowMs);
   }
@@ -347,24 +386,28 @@ function wanderStep(
   if (seat.mode === "trailing" && seat.owned.length) {
     const plan = ensureRaid(state, seat, pos, rand, nowMs);
     const home = plan.home;
-    const toGoal = toLocalM(pos.lat, pos.lon, plan.goal.lat, plan.goal.lon);
+    // Walk the loop's waypoints; once it's done, head home to bank it.
+    let toGoal = toLocalM(pos.lat, pos.lon, plan.goal.lat, plan.goal.lon);
+    while (Math.hypot(toGoal.x, toGoal.y) < 5 && plan.loopIdx < plan.loop.length) {
+      plan.loopIdx++;
+      const next = plan.loop[plan.loopIdx];
+      if (!next) break;
+      plan.goal = next;
+      toGoal = toLocalM(pos.lat, pos.lon, next.lat, next.lon);
+    }
     const goalDist = Math.hypot(toGoal.x, toGoal.y);
-    const readyToBank =
-      seat.trail.length >= plan.minTrail ||
-      (seat.trail.length >= 10 && goalDist < 5);
+    const readyToBank = plan.loopIdx >= plan.loop.length;
 
     // While out, sometimes go after another open trail before heading home.
     if (!readyToBank) {
-      const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.03);
+      const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.05);
       if (hunt) return stepToward(state, seat, pos, hunt, rand, nowMs);
     }
 
     if (readyToBank) {
       return stepToward(state, seat, pos, homeEntry(state, seat, pos) ?? home, rand, nowMs);
     }
-    if (goalDist < 4) {
-      plan.goal = pickLocalGoal(state, seat, home, rand, plan.leashM);
-    }
+    void goalDist;
     const fromHome = haversineM(home.lat, home.lon, pos.lat, pos.lon);
     if (fromHome > plan.leashM) {
       return stepToward(state, seat, pos, homeEntry(state, seat, pos) ?? home, rand, nowMs);

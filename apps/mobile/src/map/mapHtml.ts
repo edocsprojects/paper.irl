@@ -1,5 +1,5 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 20;
+export const MAP_HTML_REVISION = 21;
 
 /**
  * Sentinel kept in the loaded HTML (grep-able in Safari Web Inspector).
@@ -57,7 +57,7 @@ const CLOSE_ZOOM=17.6;
 function zoomFor(arena){
   const w=Math.max(280,(window.innerWidth||390));
   const mPerPx=(arena.radiusM*2*1.05)/w;
-  const z=Math.log2(156543.03392*Math.cos(arena.centerLat*Math.PI/180)/mPerPx);
+  const z=Math.log2(78271.51696*Math.cos(arena.centerLat*Math.PI/180)/mPerPx);
   return Math.max(15,Math.min(17.5,z));
 }
 /** Trail line widths (px): light core over a dark edge, paper.io style. */
@@ -80,7 +80,7 @@ let clockSkew=0;
 const DEATH_MS=2600;
 const POP_MS=900;
 /** Metres → screen px at the play zoom (for the spawn pop). */
-function mToPx(m,lat){ return m/(156543.03392*Math.cos(lat*Math.PI/180)/Math.pow(2,PLAY_ZOOM)); }
+function mToPx(m,lat){ return m/(78271.51696*Math.cos(lat*Math.PI/180)/Math.pow(2,PLAY_ZOOM)); }
 const nowMs=()=>(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
 
 function post(msg){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }catch(e){} }

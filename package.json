@@ -9,6 +9,7 @@
     "sim:lobby": "pnpm --filter @paper-irl/rules build && pnpm --filter @paper-irl/sim start",
     "verify:mobile": "pnpm --filter @paper-irl/rules build && pnpm --filter @paper-irl/mobile verify:bundle",
     "demo": "pnpm --filter @paper-irl/web dev",
+    "demo:phone": "pnpm --filter @paper-irl/web dev:phone",
     "dev:server": "pnpm --filter @paper-irl/server dev",
     "mobile": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=human pnpm --filter @paper-irl/mobile android",
     "mobile:join-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=join-bots pnpm --filter @paper-irl/mobile android",

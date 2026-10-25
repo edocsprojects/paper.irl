@@ -6,7 +6,7 @@ IRL [paper.io](https://paper.io)-style territory game. **MVP is freeplay GPS** i
 
 ```
 apps/mobile    Expo Android + iOS client (human / join-bots / host-bots)
-apps/web       Street-map freeplay demo — 8 bots wander the Keller circle
+apps/web       Web app: sign-in, live 7-day GPS event, ranks, settings (+ bot demo mode)
 apps/server    HTTP API + bot loop (optional Postgres)
 apps/sim       8-bot mock GPS simulation (verification harness)
 packages/rules Pure freeplay rules + optional Keller OSM graph loader (deferred)
@@ -23,6 +23,20 @@ pnpm test          # rules unit tests + headless freeplay sim
 pnpm sim:lobby     # 8 mocked players wandering Keller circle
 pnpm dev:server    # API on :3001 (DATABASE_URL optional)
 ```
+
+### Web app (live GPS event)
+
+```bash
+cp .env.example .env   # fill SUPABASE_* / VITE_SUPABASE_* for Google sign-in (optional; guests work without)
+pnpm dev:server        # terminal 1 — hosts the 7-day event
+pnpm demo              # terminal 2 — http://localhost:5173 (proxies /api → :3001)
+pnpm demo:phone        # same over HTTPS on your LAN; phones only allow GPS on https
+```
+
+- **Real GPS** (default): Let's Claim joins the current event; your first fix plants your base where you stand. Fixes outside the dashed circle are drawn for you in gray but never sent, so they can't score.
+- **Demo simulation** (Settings → Game mode): local bots, 1×–20× (1× ≈ jogging pace).
+- The event runs **7 days**; at the end the top player is recorded as winner and a new event starts. State persists in Postgres (`DATABASE_URL`) or `data/event/*.json`. Shorten with `EVENT_DURATION_MS` for testing.
+- Google sign-in goes through Supabase Auth; the server verifies the player's token before accepting fixes.
 
 ### Android (Expo Go)
 
@@ -91,6 +105,10 @@ Package name for rules is `@paper-irl/rules`.
 - `POST /lobbies/:code/fix` `{ seatId, fix }`
 - `POST /lobbies/:code/autopilot` `{ seatId }` — sim step for one seat
 - `GET /lobbies/:code` → arena + seats + top3 (freeplay)
+- `GET /event` → current 7-day event (seats, endsAt, last winner)
+- `POST /event/join` `{ name }` — join / rename (auth: `Authorization: Bearer <supabase token>` or `X-Guest-Id`)
+- `POST /event/fix` `{ fix }` — inside-circle GPS fix; outside fixes return `{ outside: true }` and are ignored
+- `GET /event/results` → recent winners
 
 ## License
 

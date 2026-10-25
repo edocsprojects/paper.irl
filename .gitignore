@@ -12,3 +12,6 @@ coverage/
 **/.verify-export-from-root/
 data/*.bin
 !data/keller/.gitkeep
+
+# Persisted 7-day event state (local, no DATABASE_URL)
+data/event/
