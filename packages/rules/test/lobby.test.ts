@@ -5,8 +5,10 @@ import {
   createLobby,
   fromLocalM,
   joinLobby,
+  markRematchReady,
   ringAreaM2,
   startLobby,
+  startRematch,
   tickLobby,
   topScores,
 } from "../src/index.js";
@@ -230,5 +232,34 @@ describe("plant trail bank cut wipe (freeplay)", () => {
     const top = topScores(lobby, 3);
     expect(top).toHaveLength(3);
     expect(top[0]!.areaM2).toBeGreaterThanOrEqual(top[1]!.areaM2);
+  });
+});
+
+describe("rematch / play again", () => {
+  it("marks ready then starts a fresh live match with same seats", () => {
+    const lobby = createLobby("KELL", arena, { durationMs: 5_000 });
+    const a = joinLobby(lobby, "A").seat;
+    const b = joinLobby(lobby, "B").seat;
+    const t0 = 4_000_000;
+    startLobby(lobby, t0);
+    applyFix(lobby, a.id, fixAt(a.respawnAt!.lat, a.respawnAt!.lon, t0 + 1), t0 + 1);
+    applyFix(lobby, b.id, fixAt(b.respawnAt!.lat, b.respawnAt!.lon, t0 + 1), t0 + 1);
+    tickLobby(lobby, t0 + 6_000);
+    expect(lobby.phase).toBe("ended");
+
+    expect(() => startRematch(lobby, t0 + 7_000)).toThrow(/need_rematch_ready/);
+    const readyFx = markRematchReady(lobby, a.id);
+    expect(readyFx.some((e) => e.kind === "rematchReady")).toBe(true);
+    expect([...lobby.rematchReady]).toEqual([a.id]);
+
+    const fx = startRematch(lobby, t0 + 8_000);
+    expect(lobby.phase).toBe("live");
+    expect(fx.some((e) => e.kind === "phase" && e.phase === "live")).toBe(true);
+    expect(lobby.seats.size).toBe(2);
+    expect(a.nickname).toBe("A");
+    expect(a.mode).toBe("toPlant");
+    expect(a.owned).toHaveLength(0);
+    expect(a.areaM2).toBe(0);
+    expect(lobby.rematchReady.size).toBe(0);
   });
 });

@@ -7,37 +7,42 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { LinearishBg } from "../components/LinearishBg";
+import { BrandMark } from "../components/BrandMark";
 import { api } from "../lib/api";
-import { launchMode, type LaunchMode } from "../lib/config";
-
-export type Session = {
-  code: string;
-  seatId: number;
-  nickname: string;
-  mode: LaunchMode;
-};
+import { launchMode } from "../lib/config";
+import { colors, fonts } from "../theme/tokens";
+import type { LobbyPayload, Session } from "../state/appMachine";
 
 type Props = {
-  onReady: (session: Session) => void;
+  busy: boolean;
+  onBusy: (v: boolean) => void;
+  onReady: (session: Session, lobby: LobbyPayload) => void;
+  onFail: (error: string) => void;
 };
 
-export function LobbyScreen({ onReady }: Props) {
+export function LobbyScreen({ busy, onBusy, onReady, onFail }: Props) {
   const mode = launchMode();
   const [nickname, setNickname] = useState("You");
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  async function finish(session: Session) {
+    const lobby = await api.get(session.code);
+    const hostId = Math.min(...lobby.seats.map((s) => s.id));
+    onReady({ ...session, isHost: session.seatId === hostId }, lobby);
+  }
 
   async function runHostBots() {
     const created = await api.createLobby();
     const joined = await api.join(created.code, nickname || "You");
     await api.fillBots(created.code, 1);
     await api.start(created.code);
-    onReady({
+    await finish({
       code: created.code,
       seatId: joined.seat.id,
       nickname: joined.seat.nickname,
       mode,
+      isHost: true,
     });
   }
 
@@ -54,11 +59,12 @@ export function LobbyScreen({ onReady }: Props) {
       await api.fillBots(lobbyCode, 1).catch(() => undefined);
       await api.start(lobbyCode);
     }
-    onReady({
+    await finish({
       code: lobbyCode,
       seatId: joined.seat.id,
       nickname: joined.seat.nickname,
       mode,
+      isHost: false,
     });
   }
 
@@ -66,37 +72,40 @@ export function LobbyScreen({ onReady }: Props) {
     if (code.trim()) {
       const lobbyCode = code.trim().toUpperCase();
       const joined = await api.join(lobbyCode, nickname || "You");
-      onReady({
+      await finish({
         code: lobbyCode,
         seatId: joined.seat.id,
         nickname: joined.seat.nickname,
         mode,
+        isHost: false,
       });
       return;
     }
     const created = await api.createLobby();
     const joined = await api.join(created.code, nickname || "You");
-    onReady({
+    await finish({
       code: created.code,
       seatId: joined.seat.id,
       nickname: joined.seat.nickname,
       mode,
+      isHost: true,
     });
   }
 
-  const title =
+  const modeLabel =
     mode === "host-bots"
-      ? "Host + 7 bots"
+      ? "Host + bots"
       : mode === "join-bots"
         ? "Join bot lobby"
-        : "Human lobby";
+        : "Create or join";
 
   return (
     <View style={styles.root}>
-      <Text style={styles.brand}>paper.irl</Text>
-      <Text style={styles.kicker}>{title}</Text>
+      <LinearishBg />
+      <BrandMark size={44} />
+      <Text style={styles.kicker}>{modeLabel}</Text>
       <Text style={styles.copy}>
-        Keller Hall · freeplay GPS · 500 m · local server
+        Keller Hall · freeplay GPS · 500 m · max 8
       </Text>
 
       <Text style={styles.label}>Nickname</Text>
@@ -105,6 +114,7 @@ export function LobbyScreen({ onReady }: Props) {
         value={nickname}
         onChangeText={setNickname}
         autoCapitalize="none"
+        placeholderTextColor={colors.muted}
       />
 
       {mode !== "host-bots" && (
@@ -120,29 +130,26 @@ export function LobbyScreen({ onReady }: Props) {
             onChangeText={setCode}
             autoCapitalize="characters"
             placeholder={
-              mode === "human" ? "Leave blank to create" : "Blank = create bot lobby"
+              mode === "human" ? "Blank to create" : "Blank = create bot lobby"
             }
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.muted}
           />
         </>
       )}
-
-      {error && <Text style={styles.error}>{error}</Text>}
 
       <Pressable
         style={[styles.btn, busy && styles.btnDisabled]}
         disabled={busy}
         onPress={async () => {
-          setBusy(true);
-          setError(null);
+          onBusy(true);
           try {
             if (mode === "host-bots") await runHostBots();
             else if (mode === "join-bots") await runJoinBots();
             else await runHuman();
           } catch (e) {
-            setError(String(e));
+            onFail(String(e));
           } finally {
-            setBusy(false);
+            onBusy(false);
           }
         }}
       >
@@ -160,25 +167,6 @@ export function LobbyScreen({ onReady }: Props) {
           </Text>
         )}
       </Pressable>
-
-      {mode === "human" && !!code.trim() && (
-        <Pressable
-          style={styles.secondary}
-          disabled={busy}
-          onPress={async () => {
-            setBusy(true);
-            try {
-              await api.start(code.trim().toUpperCase());
-            } catch (e) {
-              setError(String(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <Text style={styles.secondaryText}>Host: Start match</Text>
-        </Pressable>
-      )}
     </View>
   );
 }
@@ -186,51 +174,47 @@ export function LobbyScreen({ onReady }: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#f4f5f7",
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingTop: 72,
+    paddingBottom: 32,
     justifyContent: "center",
   },
-  brand: {
-    fontSize: 40,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-    color: "#1b1b1b",
-  },
   kicker: {
-    marginTop: 6,
-    color: "#e85d04",
-    fontWeight: "800",
-    letterSpacing: 0.6,
+    marginTop: 10,
+    color: colors.accent,
+    fontFamily: fonts.ui,
+    letterSpacing: 0.8,
     textTransform: "uppercase",
     fontSize: 12,
   },
-  copy: { marginTop: 8, color: "#6b7280", fontWeight: "600" },
+  copy: {
+    marginTop: 8,
+    color: colors.muted,
+    fontFamily: fonts.body,
+  },
   label: {
     marginTop: 22,
     marginBottom: 6,
-    fontWeight: "700",
-    color: "#374151",
+    fontFamily: fonts.ui,
+    color: colors.inkSoft,
   },
   input: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 4,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
+    borderColor: colors.line,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontWeight: "600",
-    color: "#111",
+    fontFamily: fonts.body,
+    color: colors.ink,
   },
   btn: {
     marginTop: 28,
-    backgroundColor: "#e85d04",
-    borderRadius: 999,
+    backgroundColor: colors.accent,
+    borderRadius: 4,
     paddingVertical: 14,
     alignItems: "center",
   },
   btnDisabled: { opacity: 0.6 },
-  btnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
-  secondary: { marginTop: 12, alignItems: "center", padding: 10 },
-  secondaryText: { color: "#e85d04", fontWeight: "700" },
-  error: { marginTop: 12, color: "#b91c1c", fontWeight: "600" },
+  btnText: { color: "#fff", fontFamily: fonts.ui, fontSize: 16 },
 });

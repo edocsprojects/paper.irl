@@ -4,9 +4,12 @@ import {
   buildKellerArena,
   createLobby,
   joinLobby,
+  markRematchReady,
   mulberry32,
+  seatIsBot,
   seatPublicView,
   startLobby,
+  startRematch,
   tickLobby,
   topScores,
   wanderSeat,
@@ -50,6 +53,7 @@ function lobbyPayload(lobby: LobbyState) {
     },
     seats: [...lobby.seats.values()].map(seatPublicView),
     top3: topScores(lobby, 3).map(seatPublicView),
+    rematchReady: [...lobby.rematchReady],
   };
 }
 
@@ -189,6 +193,67 @@ async function main() {
       seat: seatPublicView(lobby.seats.get(req.body.seatId)!),
       ...lobbyPayload(lobby),
     };
+  });
+
+  /** Seat taps Play again — waits for others / host rematch start. */
+  app.post<{
+    Params: { code: string };
+    Body: { seatId: number };
+  }>("/lobbies/:code/rematch/ready", async (req, reply) => {
+    const lobby = lobbies.get(req.params.code.toUpperCase());
+    if (!lobby) return reply.code(404).send({ error: "not_found" });
+    try {
+      // Bots auto-ready so human rematch isn't blocked in demo modes.
+      for (const seat of lobby.seats.values()) {
+        if (seatIsBot(seat)) lobby.rematchReady.add(seat.id);
+      }
+      const effects = markRematchReady(lobby, req.body.seatId);
+      return { effects, ...lobbyPayload(lobby) };
+    } catch (e) {
+      return reply.code(400).send({ error: String(e) });
+    }
+  });
+
+  /** Host (or last ready seat when all humans ready) starts rematch. */
+  app.post<{
+    Params: { code: string };
+    Body: { seatId: number };
+  }>("/lobbies/:code/rematch/start", async (req, reply) => {
+    const lobby = lobbies.get(req.params.code.toUpperCase());
+    if (!lobby) return reply.code(404).send({ error: "not_found" });
+    if (lobby.phase !== "ended") {
+      return reply.code(400).send({ error: "bad_phase" });
+    }
+    const seatId = req.body.seatId;
+    if (!lobby.seats.has(seatId)) {
+      return reply.code(404).send({ error: "no_seat" });
+    }
+    try {
+      for (const seat of lobby.seats.values()) {
+        if (seatIsBot(seat)) lobby.rematchReady.add(seat.id);
+      }
+      if (!lobby.rematchReady.has(seatId)) {
+        markRematchReady(lobby, seatId);
+      }
+      const humans = [...lobby.seats.values()].filter((s) => !seatIsBot(s));
+      const humansReady = humans.every((s) => lobby.rematchReady.has(s.id));
+      const isHost = seatId === Math.min(...lobby.seats.keys());
+      if (!humansReady && !isHost) {
+        return reply.code(400).send({ error: "waiting_for_players" });
+      }
+      stopBotLoop(lobby.code);
+      const effects = startRematch(lobby, Date.now());
+      startBotLoop(lobby, 1000);
+      if (db) {
+        await db.query(`UPDATE lobbies SET phase=$2 WHERE code=$1`, [
+          lobby.code,
+          lobby.phase,
+        ]);
+      }
+      return { effects, ...lobbyPayload(lobby) };
+    } catch (e) {
+      return reply.code(400).send({ error: String(e) });
+    }
   });
 
   /** Auto-pilot one seat (join-bots / host-bots human automation). */

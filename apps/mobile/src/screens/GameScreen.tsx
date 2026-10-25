@@ -1,47 +1,62 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { AppState as RNAppState, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import { api, type LobbyPayload } from "../lib/api";
-import type { Session } from "./LobbyScreen";
 import { GameMap } from "../map/GameMap";
+import { SnackbarHost } from "../components/SnackbarHost";
+import { colors, fonts } from "../theme/tokens";
+import {
+  spawnOverlayVisible,
+  type AppState,
+  type AppEvent,
+  type Session,
+} from "../state/appMachine";
+import { SpawnOverlay } from "./SpawnOverlay";
+import { ResultsOverlay } from "./ResultsOverlay";
+import { RematchWaiting } from "./RematchWaiting";
+import { LobbyWaiting } from "./LobbyWaiting";
 
-type Props = { session: Session; onExit: () => void };
+type Props = {
+  state: AppState;
+  session: Session;
+  dispatch: (e: AppEvent) => void;
+};
 
-export function GameScreen({ session, onExit }: Props) {
-  const [lobby, setLobby] = useState<LobbyPayload | null>(null);
-  const [snack, setSnack] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function GameScreen({ state, session, dispatch }: Props) {
+  const lobby = state.lobby;
   const auto = session.mode === "join-bots" || session.mode === "host-bots";
-  const plantedOnce = useRef(false);
+  const failCount = useRef(0);
 
   const you = useMemo(
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
     [lobby, session.seatId],
   );
 
-  const needSpawn =
-    lobby?.phase === "live" &&
-    !!you &&
-    (you.mode === "toPlant" || you.mode === "joining" || you.mode === "ghost");
-
   const remainingMs = Math.max(
     0,
     (lobby?.endsAtMs ?? Date.now()) - Date.now(),
   );
 
+  const pushLobby = useCallback(
+    (next: LobbyPayload) => {
+      failCount.current = 0;
+      dispatch({ type: "LOBBY", lobby: next });
+    },
+    [dispatch],
+  );
+
+  // Poll lobby
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
       try {
         const next = await api.get(session.code);
-        if (!cancelled) setLobby(next);
+        if (!cancelled) pushLobby(next);
       } catch (e) {
-        if (!cancelled) setError(String(e));
+        failCount.current += 1;
+        if (!cancelled && failCount.current >= 3) {
+          dispatch({ type: "FAIL", error: String(e) });
+        }
       }
     }
     refresh();
@@ -50,9 +65,30 @@ export function GameScreen({ session, onExit }: Props) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [session.code, auto]);
+  }, [session.code, auto, pushLobby, dispatch]);
 
-  // Human GPS (or mock when denied / emulator)
+  // App background / resume
+  useEffect(() => {
+    const sub = RNAppState.addEventListener("change", (next) => {
+      if (next === "active") {
+        dispatch({ type: "APP_FG" });
+        api
+          .get(session.code)
+          .then(pushLobby)
+          .catch((e) => dispatch({ type: "FAIL", error: String(e) }));
+      } else if (next === "background" || next === "inactive") {
+        dispatch({ type: "APP_BG" });
+      }
+    });
+    return () => sub.remove();
+  }, [dispatch, pushLobby, session.code]);
+
+  const needSpawn =
+    lobby?.phase === "live" &&
+    !!you &&
+    (you.mode === "toPlant" || you.mode === "joining" || you.mode === "ghost");
+
+  // Human GPS (or mock when denied / emulator) — freeplay fix protocol
   useEffect(() => {
     if (auto || !lobby || lobby.phase !== "live" || needSpawn) return;
     let sub: Location.LocationSubscription | null = null;
@@ -69,23 +105,29 @@ export function GameScreen({ session, onExit }: Props) {
           },
           async (pos) => {
             try {
-              await api.fix(session.code, session.seatId, {
+              const next = await api.fix(session.code, session.seatId, {
                 lat: pos.coords.latitude,
                 lon: pos.coords.longitude,
                 accuracyM: pos.coords.accuracy ?? 10,
-                speedMps: pos.coords.speed && pos.coords.speed > 0 ? pos.coords.speed : 1.5,
+                speedMps:
+                  pos.coords.speed && pos.coords.speed > 0
+                    ? pos.coords.speed
+                    : 1.5,
                 clientTsMs: Date.now(),
                 mock: false,
               });
+              pushLobby(next);
             } catch {
               /* ignore transient */
             }
           },
         );
       } else {
-        // Emulator fallback: autopilot when no GPS
         timer = setInterval(() => {
-          api.autopilot(session.code, session.seatId).then(setLobby).catch(() => undefined);
+          api
+            .autopilot(session.code, session.seatId)
+            .then(pushLobby)
+            .catch(() => undefined);
         }, 1000);
       }
     })();
@@ -94,25 +136,37 @@ export function GameScreen({ session, onExit }: Props) {
       sub?.remove();
       if (timer) clearInterval(timer);
     };
-  }, [auto, lobby?.phase, needSpawn, session.code, session.seatId]);
+  }, [
+    auto,
+    lobby?.phase,
+    needSpawn,
+    session.code,
+    session.seatId,
+    pushLobby,
+  ]);
 
   // Auto-pilot human seat for bot modes
   useEffect(() => {
     if (!auto || !lobby || lobby.phase !== "live") return;
     const id = setInterval(() => {
-      api.autopilot(session.code, session.seatId).then((next) => {
-        setLobby(next);
-        const me = next.seats.find((s) => s.id === session.seatId);
-        if (me && me.mode === "safe") plantedOnce.current = true;
-      }).catch(() => undefined);
+      api
+        .autopilot(session.code, session.seatId)
+        .then((next) => {
+          pushLobby(next);
+          const me = next.seats.find((s) => s.id === session.seatId);
+          if (me && me.mode === "safe") {
+            dispatch({ type: "SPAWN_CONFIRMED" });
+          }
+        })
+        .catch(() => undefined);
     }, 1000);
     return () => clearInterval(id);
-  }, [auto, lobby?.phase, session.code, session.seatId]);
+  }, [auto, lobby?.phase, session.code, session.seatId, pushLobby, dispatch]);
 
   async function spawn() {
     if (!you?.respawnAt) return;
     try {
-      // Freeplay: plant by sending a fix at the assigned GPS marker (rules plantRadius).
+      // Freeplay: plant by sending a fix at the assigned GPS marker.
       const at = you.respawnAt;
       const next = await api.fix(session.code, session.seatId, {
         lat: at.lat,
@@ -122,101 +176,135 @@ export function GameScreen({ session, onExit }: Props) {
         clientTsMs: Date.now(),
         mock: true,
       });
-      setLobby(next);
-      plantedOnce.current = true;
-      setSnack("You're planted — freehand claim inside the circle");
-      setTimeout(() => setSnack(null), 3500);
+      pushLobby(next);
+      dispatch({ type: "SPAWN_CONFIRMED" });
+      dispatch({
+        type: "SNACK",
+        text: "You're planted — freehand claim inside the circle",
+        tone: "good",
+      });
     } catch (e) {
-      setError(String(e));
+      dispatch({ type: "FAIL", error: String(e) });
+    }
+  }
+
+  async function startMatch() {
+    try {
+      await api.start(session.code);
+      pushLobby(await api.get(session.code));
+    } catch (e) {
+      dispatch({ type: "FAIL", error: String(e) });
+    }
+  }
+
+  async function playAgain() {
+    try {
+      const next = await api.rematchReady(session.code, session.seatId);
+      pushLobby(next);
+      dispatch({ type: "PLAY_AGAIN_READY" });
+    } catch (e) {
+      dispatch({ type: "FAIL", error: String(e) });
+    }
+  }
+
+  async function startRematch() {
+    try {
+      const next = await api.rematchStart(session.code, session.seatId);
+      pushLobby(next);
+      dispatch({
+        type: "SNACK",
+        text: "Rematch — plant at your marker",
+        tone: "good",
+      });
+    } catch (e) {
+      dispatch({ type: "FAIL", error: String(e) });
     }
   }
 
   if (!lobby) {
     return (
       <View style={styles.center}>
-        <Text style={styles.muted}>{error ?? "Loading lobby…"}</Text>
+        <Text style={styles.muted}>Loading lobby…</Text>
       </View>
     );
   }
+
+  if (state.screen === "lobby_waiting" || lobby.phase === "open") {
+    return (
+      <LobbyWaiting
+        session={session}
+        lobby={lobby}
+        onStart={startMatch}
+        onExit={() => dispatch({ type: "EXIT_HOME" })}
+        busy={state.connecting}
+      />
+    );
+  }
+
+  const showSpawn = spawnOverlayVisible(state.screen, auto);
+  const showResults = state.screen === "results";
+  const showRematch = state.screen === "rematch_waiting";
 
   return (
     <View style={styles.root}>
       <GameMap lobby={lobby} youId={session.seatId} remainingMs={remainingMs} />
 
       <View style={styles.topBar} pointerEvents="box-none">
-        <View style={styles.pill}>
-          <Text style={styles.pillText}>{lobby.code}</Text>
+        <View style={styles.chip}>
+          <Text style={styles.chipText}>{lobby.code}</Text>
         </View>
-        <Pressable style={styles.pill} onPress={onExit}>
-          <Text style={styles.pillText}>Exit</Text>
+        {!state.appActive && (
+          <View style={[styles.chip, styles.bgChip]}>
+            <Text style={styles.chipText}>Paused</Text>
+          </View>
+        )}
+        <Pressable
+          style={styles.chip}
+          onPress={() => dispatch({ type: "EXIT_HOME" })}
+        >
+          <Text style={styles.chipText}>Exit</Text>
         </Pressable>
       </View>
 
-      {snack && (
-        <View style={styles.snack}>
-          <Text style={styles.snackText}>{snack}</Text>
-        </View>
-      )}
+      <SnackbarHost
+        snack={state.snack}
+        onClear={() => dispatch({ type: "CLEAR_SNACK" })}
+      />
 
-      {needSpawn && !auto && (
-        <Pressable style={styles.spawn} onPress={spawn}>
-          <View style={styles.spawnCard}>
-            <Text style={styles.spawnKicker}>
-              {plantedOnce.current ? "Wiped" : "Match start"}
-            </Text>
-            <Text style={styles.spawnTitle}>
-              {plantedOnce.current ? "Respawn" : "Ready to plant"}
-            </Text>
-            <Text style={styles.spawnCopy}>
-              Tap anywhere to plant at your marker. Other players keep moving.
-            </Text>
-            <View style={styles.spawnBtn}>
-              <Text style={styles.spawnBtnText}>Spawn</Text>
-            </View>
-          </View>
-        </Pressable>
-      )}
+      <SpawnOverlay
+        active={showSpawn}
+        mountKey={state.mountKey}
+        wiped={state.screen === "death_respawn"}
+        onSpawn={spawn}
+      />
 
-      {lobby.phase === "ended" && (
-        <View style={styles.spawn}>
-          <View style={styles.spawnCard}>
-            <Text style={styles.spawnKicker}>Time’s up</Text>
-            <Text style={styles.spawnTitle}>Final top 3</Text>
-            {lobby.top3.map((s, i) => (
-              <Text key={s.id} style={styles.finalRow}>
-                {i + 1}. {s.nickname} — {Math.round(s.areaM2)} m²
-              </Text>
-            ))}
-            <Pressable style={styles.spawnBtn} onPress={onExit}>
-              <Text style={styles.spawnBtnText}>Back</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
+      <ResultsOverlay
+        active={showResults}
+        mountKey={state.mountKey}
+        top3={lobby.top3}
+        rematchReadyCount={(lobby.rematchReady ?? []).length}
+        rosterSize={lobby.seats.length}
+        onPlayAgain={playAgain}
+        onLeave={() => dispatch({ type: "EXIT_HOME" })}
+      />
 
-      {lobby.phase === "open" && session.mode === "human" && (
-        <Pressable
-          style={styles.startFab}
-          onPress={async () => {
-            try {
-              await api.start(session.code);
-              setLobby(await api.get(session.code));
-            } catch (e) {
-              setError(String(e));
-            }
-          }}
-        >
-          <Text style={styles.spawnBtnText}>Start match</Text>
-        </Pressable>
-      )}
+      <RematchWaiting
+        active={showRematch}
+        mountKey={state.mountKey}
+        seats={lobby.seats}
+        readyIds={lobby.rematchReady ?? []}
+        isHost={session.isHost}
+        onStartRematch={startRematch}
+        onLeave={() => dispatch({ type: "EXIT_HOME" })}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#e8ecef" },
+  root: { flex: 1, backgroundColor: colors.mapWash },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  muted: { color: "#6b7280", fontWeight: "600" },
+  muted: { color: colors.muted, fontFamily: fonts.body },
   topBar: {
     position: "absolute",
     top: 48,
@@ -224,76 +312,16 @@ const styles = StyleSheet.create({
     right: 12,
     flexDirection: "row",
     justifyContent: "space-between",
+    gap: 8,
   },
-  pill: {
+  chip: {
     backgroundColor: "rgba(255,255,255,0.94)",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
-  pillText: { fontWeight: "800", color: "#1b1b1b" },
-  snack: {
-    position: "absolute",
-    bottom: 36,
-    alignSelf: "center",
-    backgroundColor: "rgba(22,101,52,0.95)",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    maxWidth: "90%",
-  },
-  snackText: { color: "#fff", fontWeight: "700" },
-  spawn: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(232,236,239,0.55)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-  },
-  spawnCard: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    padding: 20,
-    alignItems: "center",
-  },
-  spawnKicker: {
-    color: "#e85d04",
-    fontWeight: "800",
-    letterSpacing: 1.2,
-    textTransform: "uppercase",
-    fontSize: 11,
-  },
-  spawnTitle: {
-    marginTop: 6,
-    fontSize: 26,
-    fontWeight: "800",
-    color: "#1b1b1b",
-  },
-  spawnCopy: {
-    marginTop: 8,
-    textAlign: "center",
-    color: "#6b7280",
-    fontWeight: "600",
-    lineHeight: 20,
-  },
-  spawnBtn: {
-    marginTop: 16,
-    backgroundColor: "#e85d04",
-    borderRadius: 999,
-    paddingHorizontal: 28,
-    paddingVertical: 12,
-  },
-  spawnBtnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
-  finalRow: { marginTop: 8, fontWeight: "700", color: "#1b1b1b" },
-  startFab: {
-    position: "absolute",
-    bottom: 40,
-    alignSelf: "center",
-    backgroundColor: "#e85d04",
-    borderRadius: 999,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-  },
+  bgChip: { backgroundColor: "rgba(20,20,20,0.85)" },
+  chipText: { fontFamily: fonts.ui, color: colors.ink },
 });

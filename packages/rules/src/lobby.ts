@@ -55,6 +55,7 @@ export function createLobby(
     maxSeats: opts?.maxSeats ?? 8,
     trailSampleM: 4,
     boundaryMode: "clamp",
+    rematchReady: new Set(),
   };
 }
 
@@ -110,11 +111,58 @@ export function startLobby(state: LobbyState, nowMs: number): Effect[] {
 
 export function endLobby(state: LobbyState): Effect[] {
   state.phase = "ended";
+  state.rematchReady = new Set();
   for (const seat of state.seats.values()) {
     seat.trail = [];
     if (seat.mode === "trailing") seat.mode = "safe";
   }
   return [{ kind: "phase", phase: "ended" }];
+}
+
+/**
+ * Mark a seat ready to play again with the same lobby roster.
+ * Does not start the rematch — call startRematch when the host (or auto) is ready.
+ */
+export function markRematchReady(
+  state: LobbyState,
+  seatId: SeatId,
+): Effect[] {
+  if (state.phase !== "ended") throw new Error("bad_phase");
+  if (!state.seats.has(seatId)) throw new Error("no_seat");
+  state.rematchReady.add(seatId);
+  return [
+    {
+      kind: "rematchReady",
+      seatId,
+      readyIds: [...state.rematchReady],
+    },
+  ];
+}
+
+/**
+ * Reset territory and start a new timed match with the same seats/nicknames.
+ * Requires ended phase and at least one rematch-ready seat (caller enforces host policy).
+ */
+export function startRematch(state: LobbyState, nowMs: number): Effect[] {
+  if (state.phase !== "ended") throw new Error("bad_phase");
+  if (state.seats.size < 1) throw new Error("need_players");
+  if (state.rematchReady.size < 1) throw new Error("need_rematch_ready");
+
+  for (const seat of state.seats.values()) {
+    seat.owned = [];
+    seat.trail = [];
+    seat.position = null;
+    seat.respawnAt = null;
+    seat.areaM2 = 0;
+    seat.ghostUntilMs = null;
+    seat.mode = "joining";
+  }
+  state.rematchReady = new Set();
+  // Re-open so startLobby's phase guard accepts the rematch.
+  state.phase = "open";
+  state.startedAtMs = null;
+  state.endsAtMs = null;
+  return startLobby(state, nowMs);
 }
 
 export function topScores(state: LobbyState, n = 3): Seat[] {

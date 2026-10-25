@@ -34,6 +34,8 @@ export type LobbyPayload = {
   };
   seats: SeatView[];
   top3: SeatView[];
+  /** Seats that tapped Play again (same lobby code). */
+  rematchReady?: number[];
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,8 +46,19 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error ?? res.statusText);
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  if (!res.ok) {
+    const err =
+      body && typeof body === "object" && "error" in body
+        ? String((body as { error: unknown }).error)
+        : res.statusText;
+    throw new Error(err);
+  }
   return body as T;
 }
 
@@ -89,6 +102,16 @@ export const api = {
     }),
   autopilot: (code: string, seatId: number) =>
     req<LobbyPayload>(`/lobbies/${code}/autopilot`, {
+      method: "POST",
+      body: JSON.stringify({ seatId }),
+    }),
+  rematchReady: (code: string, seatId: number) =>
+    req<LobbyPayload>(`/lobbies/${code}/rematch/ready`, {
+      method: "POST",
+      body: JSON.stringify({ seatId }),
+    }),
+  rematchStart: (code: string, seatId: number) =>
+    req<LobbyPayload>(`/lobbies/${code}/rematch/start`, {
       method: "POST",
       body: JSON.stringify({ seatId }),
     }),
