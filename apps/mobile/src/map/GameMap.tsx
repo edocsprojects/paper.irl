@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { WebView } from "react-native-webview";
+import { buildTrailPaint } from "@paper-irl/rules";
 import { buildMapHtml, MAP_HTML_REVISION } from "./mapHtml";
 import type { LobbyPayload, SeatView } from "../lib/api";
 
@@ -35,6 +36,14 @@ function buildStateMessage(lobby: LobbyPayload, youId: number): string {
     ...s,
     you: s.id === youId,
   }));
+  const trails = buildTrailPaint(
+    lobby.seats.map((s) => ({
+      id: s.id,
+      mode: s.mode,
+      trail: s.trail,
+      position: s.position,
+    })),
+  );
   return JSON.stringify({
     type: "state",
     state: {
@@ -42,6 +51,7 @@ function buildStateMessage(lobby: LobbyPayload, youId: number): string {
       mode: lobby.mode,
       seats,
       top3: lobby.top3,
+      trails,
     },
   });
 }

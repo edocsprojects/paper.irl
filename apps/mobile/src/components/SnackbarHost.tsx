@@ -46,6 +46,9 @@ const styles = StyleSheet.create({
     height: undefined,
     alignItems: "center",
     justifyContent: "flex-end",
+    // Above SpawnOverlay (zIndex 20) so cut/planted toasts stay readable.
+    zIndex: 40,
+    elevation: 40,
   },
   bar: {
     backgroundColor: "rgba(20,20,20,0.92)",

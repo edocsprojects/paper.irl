@@ -172,7 +172,7 @@ export function GameScreen({
       dispatch({ type: "SPAWN_CONFIRMED" });
       dispatch({
         type: "SNACK",
-        text: "You're planted — claim inside the circle",
+        text: "You're planted",
         tone: "good",
       });
     } catch (e) {

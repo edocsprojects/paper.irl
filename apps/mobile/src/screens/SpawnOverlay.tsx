@@ -46,13 +46,15 @@ const styles = StyleSheet.create({
   fill: {
     flex: 1,
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "center",
     padding: 28,
-    paddingBottom: 56,
+    // Keep the tap control above the bottom SnackbarHost toast.
+    paddingBottom: 120,
   },
   copyBlock: {
     alignItems: "center",
     maxWidth: 340,
+    marginBottom: 48,
   },
   kicker: {
     color: colors.accent,

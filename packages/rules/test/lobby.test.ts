@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   applyFix,
   buildKellerArena,
+  circleRing,
   createLobby,
   fromLocalM,
   haversineM,
+  isInsideArena,
   joinLobby,
   markRematchReady,
+  pointInRing,
   ringAreaM2,
+  ringsIntersectionAreaM2,
   startLobby,
   startRematch,
   tickLobby,
@@ -83,6 +87,225 @@ describe("lobby lifecycle", () => {
         expect(d).toBeGreaterThanOrEqual(minSep - 0.5);
       }
     }
+  });
+
+  it("8 starters are pairwise disjoint (centers ≥ 2R, intersection area 0)", () => {
+    const lobby = createLobby("OCT", arena, { durationMs: 120_000 });
+    for (let i = 0; i < 8; i++) joinLobby(lobby, `P${i}`);
+    const t0 = 9_100_000;
+    startLobby(lobby, t0);
+    expect(lobby.seats.size).toBe(8);
+
+    const minCenterSep = arena.starterRadiusM * 2;
+    const seats = [...lobby.seats.values()];
+    for (const s of seats) {
+      applyFix(
+        lobby,
+        s.id,
+        fixAt(s.respawnAt!.lat, s.respawnAt!.lon, t0 + s.id),
+        t0 + s.id,
+      );
+      expect(s.mode).toBe("safe");
+      expect(s.owned.length).toBe(1);
+    }
+
+    for (let i = 0; i < seats.length; i++) {
+      for (let j = i + 1; j < seats.length; j++) {
+        const a = seats[i]!;
+        const b = seats[j]!;
+        const ca = a.position!;
+        const cb = b.position!;
+        const d = haversineM(ca.lat, ca.lon, cb.lat, cb.lon);
+        expect(d).toBeGreaterThanOrEqual(minCenterSep - 0.5);
+        expect(ringsIntersectionAreaM2(a.owned[0]!, b.owned[0]!)).toBe(0);
+      }
+    }
+  });
+});
+
+describe("exclusive ownership + respawn + cut edges", () => {
+  it("rejects respawn plant inside enemy territory or another starter", () => {
+    const lobby = createLobby("REJ", arena, { durationMs: 120_000 });
+    const a = joinLobby(lobby, "A").seat;
+    const b = joinLobby(lobby, "B").seat;
+    const t0 = 9_200_000;
+    startLobby(lobby, t0);
+    applyFix(
+      lobby,
+      a.id,
+      fixAt(a.respawnAt!.lat, a.respawnAt!.lon, t0 + 1),
+      t0 + 1,
+    );
+    expect(a.mode).toBe("safe");
+
+    // Force B's marker into A's starter disk — plant must move/reject.
+    const insideA = fromLocalM(a.position!.lat, a.position!.lon, 4, 0);
+    b.respawnAt = insideA;
+    b.position = insideA;
+    const before = { ...insideA };
+    applyFix(
+      lobby,
+      b.id,
+      { ...fixAt(insideA.lat, insideA.lon, t0 + 2), plant: true },
+      t0 + 2,
+    );
+    expect(b.mode).toBe("toPlant");
+    expect(b.owned.length).toBe(0);
+    expect(b.respawnAt).not.toBeNull();
+    const moved = b.respawnAt!;
+    const stillInside =
+      pointInRing(moved, a.owned[0]!) ||
+      haversineM(moved.lat, moved.lon, before.lat, before.lon) < 1;
+    expect(stillInside).toBe(false);
+    expect(
+      haversineM(moved.lat, moved.lon, a.position!.lat, a.position!.lon),
+    ).toBeGreaterThanOrEqual(arena.starterRadiusM * 2 - 0.5);
+  });
+
+  it("after overlapping banks, owned regions are pairwise disjoint", () => {
+    const lobby = createLobby("BANK", arena, { durationMs: 180_000 });
+    const a = joinLobby(lobby, "A").seat;
+    const b = joinLobby(lobby, "B").seat;
+    const t0 = 9_300_000;
+    startLobby(lobby, t0);
+
+    // Plant at forced nearby but still ≥2R centers so starters don't overlap.
+    const c = { lat: arena.centerLat, lon: arena.centerLon };
+    const pA = fromLocalM(c.lat, c.lon, -30, 0);
+    const pB = fromLocalM(c.lat, c.lon, 30, 0);
+    a.respawnAt = pA;
+    b.respawnAt = pB;
+    applyFix(lobby, a.id, fixAt(pA.lat, pA.lon, t0 + 1), t0 + 1);
+    applyFix(lobby, b.id, fixAt(pB.lat, pB.lon, t0 + 2), t0 + 2);
+    expect(a.mode).toBe("safe");
+    expect(b.mode).toBe("safe");
+
+    // Both bank loops that overlap in the midline without swallowing the
+    // other starter disk (centers stay ≥2R clear of the opposing hull).
+    function bankToward(
+      seat: typeof a,
+      home: { lat: number; lon: number },
+      xSign: number,
+      tBase: number,
+    ) {
+      const offsets: [number, number][] = [
+        [40 * xSign, -28],
+        [40 * xSign, 28],
+        [6 * xSign, 28],
+        [6 * xSign, 0],
+      ];
+      let t = tBase;
+      for (const [x, y] of offsets) {
+        const p = fromLocalM(home.lat, home.lon, x, y);
+        applyFix(lobby, seat.id, fixAt(p.lat, p.lon, t), t);
+        t += 1;
+      }
+    }
+    bankToward(a, a.position!, 1, t0 + 10);
+    expect(a.mode).toBe("safe");
+    expect(b.owned.length).toBe(1); // A must not wipe B's starter
+    bankToward(b, b.position!, -1, t0 + 20);
+
+    expect(a.mode).toBe("safe");
+    expect(b.mode).toBe("safe");
+    expect(a.owned.length).toBe(1);
+    expect(b.owned.length).toBe(1);
+
+    const overlap = ringsIntersectionAreaM2(a.owned[0]!, b.owned[0]!);
+    expect(overlap).toBe(0);
+
+    // Probe grid: every point is neutral or exactly one owner.
+    for (let x = -80; x <= 80; x += 10) {
+      for (let y = -60; y <= 60; y += 10) {
+        const p = fromLocalM(c.lat, c.lon, x, y);
+        const inA = a.owned.some((r) => pointInRing(p, r));
+        const inB = b.owned.some((r) => pointInRing(p, r));
+        expect(Number(inA) + Number(inB)).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it("cut: victim land goes neutral, trail clears, not left in cutter zone", () => {
+    const lobby = createLobby("CUT", arena, { durationMs: 120_000 });
+    const a = joinLobby(lobby, "Victim").seat;
+    const b = joinLobby(lobby, "Cutter").seat;
+    const t0 = 9_400_000;
+    startLobby(lobby, t0);
+    applyFix(
+      lobby,
+      a.id,
+      fixAt(a.respawnAt!.lat, a.respawnAt!.lon, t0 + 1),
+      t0 + 1,
+    );
+    applyFix(
+      lobby,
+      b.id,
+      fixAt(b.respawnAt!.lat, b.respawnAt!.lon, t0 + 2),
+      t0 + 2,
+    );
+
+    const home = a.position!;
+    const p1 = fromLocalM(home.lat, home.lon, 45, 0);
+    const p2 = fromLocalM(home.lat, home.lon, 70, 0);
+    const p3 = fromLocalM(home.lat, home.lon, 95, 0);
+    applyFix(lobby, a.id, fixAt(p1.lat, p1.lon, t0 + 10), t0 + 10);
+    applyFix(lobby, a.id, fixAt(p2.lat, p2.lon, t0 + 12), t0 + 12);
+    applyFix(lobby, a.id, fixAt(p3.lat, p3.lon, t0 + 15), t0 + 15);
+    expect(a.mode).toBe("trailing");
+    expect(a.trail.length).toBeGreaterThanOrEqual(2);
+    const victimAreaBefore = a.areaM2;
+    expect(victimAreaBefore).toBeGreaterThan(0);
+    const cutterAreaBefore = b.areaM2;
+
+    applyFix(lobby, b.id, fixAt(p2.lat, p2.lon, t0 + 20), t0 + 20);
+
+    // Neutral — not stolen by cutter.
+    expect(a.owned.length).toBe(0);
+    expect(a.areaM2).toBe(0);
+    expect(a.trail.length).toBe(0);
+    expect(b.areaM2).toBeLessThanOrEqual(cutterAreaBefore + 1);
+
+    expect(a.mode).toBe("toPlant");
+    expect(a.respawnAt).not.toBeNull();
+    expect(a.position).not.toBeNull();
+    for (const ring of b.owned) {
+      expect(pointInRing(a.respawnAt!, ring)).toBe(false);
+      expect(pointInRing(a.position!, ring)).toBe(false);
+    }
+  });
+
+  it("boundary soft-push keeps position and territory inside the circle", () => {
+    const lobby = createLobby("BND", arena, { durationMs: 60_000 });
+    const { seat } = joinLobby(lobby, "A");
+    const t0 = 9_500_000;
+    startLobby(lobby, t0);
+    applyFix(
+      lobby,
+      seat.id,
+      fixAt(seat.respawnAt!.lat, seat.respawnAt!.lon, t0 + 1),
+      t0 + 1,
+    );
+    const wayOut = fromLocalM(arena.centerLat, arena.centerLon, 800, 0);
+    const effects = applyFix(
+      lobby,
+      seat.id,
+      fixAt(wayOut.lat, wayOut.lon, t0 + 2),
+      t0 + 2,
+    );
+    expect(effects.some((e) => e.kind === "boundaryPush")).toBe(true);
+    expect(seat.position).not.toBeNull();
+    expect(isInsideArena(arena, seat.position!, 1)).toBe(true);
+    for (const ring of seat.owned) {
+      for (const p of ring) {
+        expect(isInsideArena(arena, p, arena.starterRadiusM + 2)).toBe(true);
+      }
+    }
+    // Soft-push must not invent a ring outside the arena.
+    const outsideRing = circleRing(wayOut, 30, 12);
+    expect(isInsideArena(arena, outsideRing[0]!, 0)).toBe(false);
+    expect(seat.owned.some((r) => ringsIntersectionAreaM2(r, outsideRing) > 1)).toBe(
+      false,
+    );
   });
 });
 

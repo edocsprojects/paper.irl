@@ -1,5 +1,5 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 9;
+export const MAP_HTML_REVISION = 10;
 
 /**
  * Sentinels for verify-map-trails.js — must stay in the loaded HTML.
@@ -176,7 +176,10 @@ function flushLayers(){
   if(!ready||!map.getSource('players')||!map.getSource('owned')||!lastState) return;
   ensureTrailLayers();
   const owned={type:'FeatureCollection',features:[]};
-  const trails={type:'FeatureCollection',features:[]};
+  /* Prefer RN-built trail FeatureCollection (buildTrailPaint) when present. */
+  const trails=(lastState&&lastState.trails&&lastState.trails.type==='FeatureCollection')
+    ? lastState.trails
+    : {type:'FeatureCollection',features:[]};
   const players={type:'FeatureCollection',features:[]};
   for(const id of Object.keys(seatsLive)){
     const live=seatsLive[id];
@@ -189,13 +192,15 @@ function flushLayers(){
       }
       owned.features.push({type:'Feature',properties:{fill:live.color,border},geometry:{type:'Polygon',coordinates:[coords]}});
     }
-    const tc=trailCoords(live);
-    if(tc && tc.length>=2){
-      trails.features.push({
-        type:'Feature',
-        properties:{kind:'trail',seatId:live.id||id},
-        geometry:{type:'LineString',coordinates:tc}
-      });
+    if(!(lastState&&lastState.trails&&lastState.trails.type==='FeatureCollection')){
+      const tc=trailCoords(live);
+      if(tc && tc.length>=2){
+        trails.features.push({
+          type:'Feature',
+          properties:{kind:'trail',seatId:live.id||id},
+          geometry:{type:'LineString',coordinates:tc}
+        });
+      }
     }
     players.features.push({
       type:'Feature',
