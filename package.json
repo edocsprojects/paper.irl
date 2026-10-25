@@ -9,6 +9,9 @@
     "sim:lobby": "pnpm --filter @paper-irl/rules build && pnpm --filter @paper-irl/sim start",
     "demo": "pnpm --filter @paper-irl/web dev",
     "dev:server": "pnpm --filter @paper-irl/server dev",
+    "mobile": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=human pnpm --filter @paper-irl/mobile android",
+    "mobile:join-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=join-bots pnpm --filter @paper-irl/mobile android",
+    "mobile:host-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=host-bots pnpm --filter @paper-irl/mobile android",
     "typecheck": "pnpm -r run typecheck"
   },
   "engines": {

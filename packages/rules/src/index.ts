@@ -4,3 +4,4 @@ export * from "./arena.js";
 export * from "./kellerGraph.js";
 export * from "./graphJson.js";
 export * from "./lobby.js";
+export * from "./botWander.js";

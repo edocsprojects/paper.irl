@@ -26,5 +26,6 @@ Short product rules for implementers. Full plan lives in the project agent store
 
 - Node server + rules package + Docker Postgres (optional for sim).
 - `pnpm demo` — MapLibre street UI + freeplay + P1 spawn + 8 wandering bots.
+- `pnpm mobile` / `mobile:join-bots` / `mobile:host-bots` — Expo Android (see `apps/mobile/README.md`).
 - `pnpm sim:lobby` — 8 mocked bots with synthetic free GPS in the Keller circle.
 - `pnpm test` — unit rules tests.

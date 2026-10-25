@@ -1,0 +1,28 @@
+{
+  "name": "@paper-irl/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "human": "EXPO_PUBLIC_LAUNCH=human expo start --android",
+    "join-bots": "EXPO_PUBLIC_LAUNCH=join-bots expo start --android",
+    "host-bots": "EXPO_PUBLIC_LAUNCH=host-bots expo start --android"
+  },
+  "dependencies": {
+    "@paper-irl/rules": "workspace:*",
+    "expo": "~52.0.46",
+    "expo-constants": "~17.0.8",
+    "expo-location": "~18.0.10",
+    "expo-status-bar": "~2.0.1",
+    "react": "18.3.1",
+    "react-native": "0.76.9",
+    "react-native-webview": "13.12.5"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.12",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "paper.irl",
+    "slug": "paper-irl",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
+    "android": {
+      "package": "irl.paper.demo",
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "FOREGROUND_SERVICE"
+      ]
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "irl.paper.demo"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "paper.irl uses your location to play on campus paths."
+        }
+      ]
+    ],
+    "extra": {
+      "launchMode": "human"
+    }
+  }
+}
