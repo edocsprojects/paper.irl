@@ -10,6 +10,7 @@
     "prebuild:ios": "expo prebuild --platform ios --no-install",
     "verify:bundle": "node ./scripts/verify-bundle-entry.js",
     "verify:metro": "node ./scripts/metro-http-probe.js",
+    "ios:clean": "node ./scripts/ios-clean.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "human": "EXPO_PUBLIC_LAUNCH=human expo start --android",
     "join-bots": "EXPO_PUBLIC_LAUNCH=join-bots expo start --android",

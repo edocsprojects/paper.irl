@@ -17,6 +17,7 @@
     "mobile:ios:join-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=join-bots pnpm --filter @paper-irl/mobile ios",
     "mobile:ios:host-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=host-bots pnpm --filter @paper-irl/mobile ios",
     "mobile:prebuild:ios": "pnpm --filter @paper-irl/mobile prebuild:ios",
+    "mobile:ios:clean": "pnpm --filter @paper-irl/mobile ios:clean",
     "typecheck": "pnpm -r run typecheck"
   },
   "engines": {

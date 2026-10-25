@@ -42,7 +42,17 @@ pnpm verify:mobile
 # or: pnpm --filter @paper-irl/mobile verify:bundle
 ```
 
-Catches: `@babel/runtime`, `expo/AppEntry` `../../App`, bare `./index` from repo root, and HTTP-probes virtual-metro-entry + `/apps/mobile/index.bundle`.
+Catches: `@babel/runtime`, `expo/AppEntry` `../../App`, bare `./index` from repo root, stale `.pnpm` symlinks / autolinking paths, and (on macOS) `Podfile.lock` / `Pods` still pointing at `node_modules/.pnpm`. HTTP-probes virtual-metro-entry, `/apps/mobile/index.bundle`, and bare `/index.bundle` with Metro launched exactly like `pnpm mobile:ios:host-bots` (repo root + `pnpm --filter`).
+
+`metro.config.js` also rewrites bare `/index.bundle` → `/apps/mobile/index.bundle`, so an old Simulator binary that still asks for `index` gets the app instead of the `./index` redbox.
+
+### Stale native build (xcodebuild 65 / `ExpoModulesCore` pcm / `.pnpm/expo-modules-core@…`)
+
+Pods + DerivedData built before `node-linker=hoisted` reference `node_modules/.pnpm/...` paths that no longer exist. The build fails, the **old** app stays on the Simulator, and it redboxes on `./index`. Fix:
+
+```bash
+pnpm mobile:ios:clean   # rm ios/Pods, Podfile.lock, ios/build, DerivedData/paperirl-*, uninstall irl.paper.demo
+```
 
 ---
 
@@ -54,9 +64,10 @@ Free Apple **Personal Team** is enough for **Simulator**. Paid **$99/yr** only f
 
 ```bash
 git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline
-rm -rf node_modules apps/mobile/node_modules apps/mobile/.expo apps/mobile/.verify-export apps/mobile/.verify-export-from-root
+rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/mobile/.expo apps/mobile/.verify-export apps/mobile/.verify-export-from-root
 pnpm install
 pnpm --filter @paper-irl/rules build
+pnpm mobile:ios:clean
 pnpm verify:mobile
 pnpm dev:server
 ```
@@ -73,7 +84,9 @@ Or open Xcode after pods:
 cd apps/mobile/ios && pod install && open paperirl.xcworkspace
 ```
 
-Xcode → **paperirl** → iPhone Simulator → **Run** (rebuild so AppDelegate is current).
+Xcode → **paperirl** → iPhone Simulator → **Run** (rebuild so AppDelegate is current). If Xcode shows a pcm / `.pnpm` error, quit Xcode, run `pnpm mobile:ios:clean`, then `pod install` again.
+
+Freeplay mode is **not** on this branch — it lands separately (PR #5); mobile freeplay is the follow-up once iOS boot is green.
 
 ---
 

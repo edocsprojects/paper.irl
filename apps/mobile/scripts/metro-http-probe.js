@@ -162,14 +162,19 @@ async function main() {
   }
   console.log("OK: /apps/mobile/index.bundle");
 
-  // Bare /index at workspace Metro root should NOT be the happy path.
-  if (bare.status === 200 && !hasResolveErr(bare.body) && !hasIndexFromRootBug(bare.body)) {
-    console.log(
-      "WARN: bare /index.bundle succeeded — AppDelegate must still use virtual-metro-entry (not @\"index\")"
-    );
-  } else {
-    console.log("OK: bare /index.bundle is not a valid monorepo entry (expected)");
+  // A native build whose bundle root is "index" (the 75fe2c8 AppDelegate, or any
+  // stale binary) requests /index.bundle; it must serve the app, not redbox.
+  if (bare.status !== 200 || hasResolveErr(bare.body) || hasIndexFromRootBug(bare.body)) {
+    fail(`bare /index.bundle (stale-binary path) failed:\n${bare.body.slice(0, 800)}`);
   }
+  console.log("OK: bare /index.bundle serves the app (stale binary cannot hit ./index redbox)");
+
+  for (const [name, res] of [["virtual", virtual], ["mono", mono], ["bare", bare]]) {
+    if (!res.body.includes("LobbyScreen")) {
+      fail(`${name} bundle does not contain the app (LobbyScreen missing)`);
+    }
+  }
+  console.log("OK: all three entry URLs bundle the paper.irl app");
 
   // Ensure workspace has no spoof index that would hide the bug
   const spoof = path.join(workspaceRoot, "index.js");

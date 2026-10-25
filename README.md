@@ -48,7 +48,7 @@ In Xcode: pick an **iPhone Simulator** → **Run** (▶). Free **Personal Team**
 
 CLI: `pnpm mobile:ios` / `pnpm mobile:ios:join-bots` / `pnpm mobile:ios:host-bots` (same three modes; Simulator API default `http://127.0.0.1:3001`).
 
-Metro monorepo gate (required before Simulator): `pnpm verify:mobile` (also part of `pnpm test`).
+Metro monorepo gate (required before Simulator): `pnpm verify:mobile` (also part of `pnpm test`). After switching branches / reinstalling, wipe stale Pods + DerivedData with `pnpm mobile:ios:clean`.
 
 Full Mac two-terminal steps: [`apps/mobile/README.md`](apps/mobile/README.md).
 

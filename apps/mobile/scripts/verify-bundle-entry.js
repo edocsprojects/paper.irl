@@ -131,6 +131,55 @@ if (!fs.existsSync(babelMobile) && !fs.existsSync(babelRoot)) {
 }
 ok("@babel/runtime helpers present");
 
+section("node_modules layout (node-linker=hoisted, no stale .pnpm links)");
+
+const pnpmStore = path.join(workspaceRoot, "node_modules/.pnpm");
+const staleStore = fs.existsSync(pnpmStore)
+  ? fs.readdirSync(pnpmStore).filter((n) => n !== "lock.yaml" && !n.startsWith("."))
+  : [];
+if (staleStore.length) {
+  fail(
+    `node_modules/.pnpm still holds ${staleStore.length} packages from the isolated layout ` +
+      `(e.g. ${staleStore[0]}). rm -rf node_modules apps/*/node_modules packages/*/node_modules && pnpm install`
+  );
+}
+const mobileModules = path.join(projectRoot, "node_modules");
+for (const name of fs.existsSync(mobileModules) ? fs.readdirSync(mobileModules) : []) {
+  const p = path.join(mobileModules, name);
+  if (fs.lstatSync(p).isSymbolicLink() && fs.readlinkSync(p).includes(".pnpm")) {
+    fail(`apps/mobile/node_modules/${name} is a stale symlink into .pnpm — clean reinstall required`);
+  }
+}
+ok("hoisted layout, no .pnpm package links");
+
+section("iOS autolinking (what pod install links)");
+
+const autolink = spawnSync(
+  "npx",
+  ["expo-modules-autolinking", "resolve", "--platform", "apple", "--json"],
+  { cwd: projectRoot, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" }, timeout: 60_000 }
+);
+if (autolink.status !== 0) fail(`expo-modules-autolinking resolve failed:\n${autolink.stderr}`);
+const pods = JSON.parse(autolink.stdout).modules.flatMap((m) => m.pods);
+for (const required of ["ExpoModulesCore", "ExpoLocation", "EXConstants"]) {
+  const pod = pods.find((p) => p.podName === required);
+  if (!pod) fail(`autolinking is missing pod ${required}`);
+  if (pod.podspecDir.includes("/.pnpm/")) fail(`${required} links through .pnpm: ${pod.podspecDir}`);
+  if (!fs.existsSync(pod.podspecDir)) fail(`${required} podspec dir missing: ${pod.podspecDir}`);
+}
+ok(`autolinking resolves ${pods.length} pods incl. ExpoModulesCore/ExpoLocation/EXConstants at hoisted paths`);
+
+if (process.platform === "darwin") {
+  section("local iOS build state (macOS)");
+  for (const rel of ["ios/Podfile.lock", "ios/Pods/Manifest.lock"]) {
+    const p = path.join(projectRoot, rel);
+    if (fs.existsSync(p) && fs.readFileSync(p, "utf8").includes(".pnpm/")) {
+      fail(`${rel} references node_modules/.pnpm (old layout → corrupted ExpoModulesCore .pcm). Run: pnpm mobile:ios:clean`);
+    }
+  }
+  ok("no Pods state pointing at the old .pnpm layout");
+}
+
 section("expo export (apps/mobile cwd)");
 
 const outDir = path.join(projectRoot, ".verify-export");
