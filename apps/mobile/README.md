@@ -38,15 +38,15 @@ Cloud agents cannot run Xcode. Do this on your Mac. A **free Apple ID / Personal
 3. Install **CocoaPods**: `sudo gem install cocoapods` (or `brew install cocoapods`)
 4. Node **20+** and pnpm: `corepack enable`
 
-### After pulling this branch (Metro / `@babel/runtime`)
+### After pulling this branch (Metro)
 
-pnpm isolation hid `@babel/runtime` from Metro. The app depends on it directly, and root `.npmrc` hoists it. From a clean tree:
+pnpm nests `expo` so default `expo/AppEntry` can’t see `../../App`. Entry is local `index.js` → `./App`. `@babel/runtime` is a direct dep + hoisted via `.npmrc`.
 
 ```bash
-pnpm install && pnpm --filter @paper-irl/rules build && pnpm dev:server & pnpm mobile:ios:host-bots
+git pull && pnpm install && pnpm mobile:ios:host-bots
 ```
 
-Or two terminals: `pnpm install` → `pnpm dev:server` → `pnpm mobile:ios:host-bots`.
+(with `pnpm --filter @paper-irl/rules build` once, and `pnpm dev:server` in another terminal)
 
 ### Open in Xcode and Run (Simulator)
 
