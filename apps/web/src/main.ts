@@ -4,6 +4,7 @@ import { LocalMatch, type SimSnapshot, type SimSnapshotSeat } from "./botSim.js"
 import { LiveMatch } from "./liveGame.js";
 import { GameMap } from "./mapView.js";
 import { loadProfile, saveProfile } from "./profile.js";
+import { startLoopScene } from "./loopScene.js";
 import "./styles.css";
 
 /**
@@ -965,6 +966,9 @@ async function main() {
     }
     paintUi();
   }
+
+  const scene = document.querySelector<SVGSVGElement>(".loop-scene");
+  if (scene) startLoopScene(scene, () => screen === "intro");
 
   show(profile.signIn === null ? "intro" : "home");
   requestAnimationFrame(frame);

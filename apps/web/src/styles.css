@@ -1714,51 +1714,7 @@ select {
   opacity: 0.4;
 }
 
-/* The loop is revealed by a mask stroke, so the visible trail stays dashed. */
-.h-draw-stroke {
-  stroke-dasharray: 420;
-  stroke-dashoffset: 420;
-  animation: h-draw 7s linear infinite;
-}
-
-.h-claim {
-  fill: #e85d04;
-  fill-opacity: 0;
-  stroke: #e85d04;
-  stroke-opacity: 0;
-  stroke-width: 3.5;
-  stroke-linejoin: round;
-  animation: h-claim 7s ease-out infinite;
-}
-
-.h-trail {
-  animation: h-trail 7s linear infinite;
-}
-
-@keyframes h-draw {
-  0% { stroke-dashoffset: 420; }
-  70% { stroke-dashoffset: 0; }
-  100% { stroke-dashoffset: 0; }
-}
-
-@keyframes h-trail {
-  0%, 70% { opacity: 1; }
-  76%, 100% { opacity: 0; }
-}
-
-@keyframes h-claim {
-  0%, 70% { fill-opacity: 0; stroke-opacity: 0; }
-  76%, 92% { fill-opacity: 0.38; stroke-opacity: 1; }
-  100% { fill-opacity: 0; stroke-opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .h-draw-stroke,
-  .h-trail,
-  .h-claim {
-    animation: none;
-  }
-  .h-draw-stroke {
-    stroke-dashoffset: 0;
-  }
+/* Sign-in loop scene: animated from JS (trail tip and runner share one clock). */
+.h-merged {
+  opacity: 0;
 }

@@ -20,14 +20,99 @@
       <!-- Intro: illustrated campus map that fades into the sign-in buttons -->
       <section class="screen intro" data-screen="intro">
         <header class="intro-brand">paper.irl</header>
-        <svg class="intro-map" viewBox="0 0 400 860" preserveAspectRatio="xMidYMin slice" aria-hidden="true">
+        <svg class="intro-map loop-scene" viewBox="0 0 400 640" preserveAspectRatio="xMidYMin slice" aria-hidden="true">
+            <defs>
+              <g id="h-minor" fill="none" stroke-linecap="round">
+                <path d="M-10 70 H410 M-10 380 H410 M60 -10 V650 M330 -10 V650" />
+                <path d="M140 -10 Q150 120 120 200 T150 650" />
+                <path d="M200 70 Q260 120 330 110" />
+              </g>
+              <g id="h-major" fill="none" stroke-linecap="round">
+                <path d="M-20 330 L420 60" />
+              </g>
+              <path id="h-loop" d="M214 250 C 236 196, 300 168, 336 196 S 352 300, 300 316 S 236 312, 222 286" />
+            </defs>
+            <rect class="m-land" width="400" height="640" />
+            <path class="h-lake" d="M-20 300 Q60 280 110 330 Q150 380 120 470 Q100 560 140 660 L-20 660 Z" />
+            <circle class="m-park" cx="300" cy="96" r="58" />
+            <path class="m-park" d="M24 96 h80 a8 8 0 0 1 8 8 v70 a8 8 0 0 1 -8 8 h-80 a8 8 0 0 1 -8 -8 v-70 a8 8 0 0 1 8 -8z" />
+            <g class="m-building">
+              <rect x="8" y="8" width="44" height="52" rx="5" />
+              <rect x="70" y="8" width="58" height="52" rx="5" />
+              <rect x="160" y="8" width="56" height="52" rx="5" />
+              <rect x="346" y="8" width="46" height="52" rx="5" />
+              <rect x="160" y="84" width="34" height="56" rx="5" />
+              <rect x="346" y="80" width="46" height="70" rx="5" />
+              <rect x="70" y="200" width="44" height="60" rx="5" />
+              <rect x="346" y="240" width="46" height="60" rx="5" />
+              <rect x="176" y="330" width="70" height="40" rx="5" />
+              <rect x="260" y="330" width="56" height="40" rx="5" />
+              <rect x="176" y="396" width="140" height="40" rx="5" />
+              <rect x="346" y="396" width="46" height="40" rx="5" />
+            </g>
+            <use href="#h-minor" class="m-road-edge" stroke-width="12" />
+            <use href="#h-minor" class="m-road" stroke-width="8" />
+            <use href="#h-major" class="m-major-edge" stroke-width="20" />
+            <use href="#h-major" class="m-major" stroke-width="14" />
+            <circle class="m-boundary" cx="210" cy="230" r="196" />
+
+            <!-- Other players -->
+            <path class="t-fill" style="--t:#8b5cf6" d="M60 120 q34 -18 58 6 q12 34 -12 54 q-34 12 -52 -12 q-10 -28 6 -48z" />
+            <circle class="t-dot" style="--t:#8b5cf6" cx="112" cy="166" r="6" />
+            <path class="t-fill" style="--t:#14b8a6" d="M262 60 q40 -10 58 18 q8 34 -20 48 q-36 6 -46 -24 q-4 -26 8 -42z" />
+            <path class="t-trail" style="--t:#14b8a6" d="M300 124 q-10 40 -50 56" />
+            <circle class="t-dot" style="--t:#14b8a6" cx="250" cy="180" r="6" />
+            <circle class="h-ring" cx="80" cy="360" r="26" />
+            <circle class="t-dot h-ghost" style="--t:#ec4899" cx="96" cy="388" r="6" />
+
+            <!-- You: land, the loop being drawn, then the claim filling in -->
+            <path class="t-fill h-land" style="--t:#e85d04" d="M150 214 q46 -24 74 14 q16 40 -12 66 q-40 18 -68 -10 q-18 -36 6 -70z" />
+            <path class="t-fill h-merged" style="--t:#e85d04" d="M150 214 C 182 194, 220 194, 246 204 C 278 182, 316 174, 336 196 S 352 300, 300 316 S 236 314, 216 296 C 196 310, 166 304, 144 284 C 128 252, 132 228, 150 214 Z" />
+            <path class="t-trail h-trail" style="--t:#e85d04" d="" />
+            <circle class="t-dot h-runner" style="--t:#e85d04" r="9" cx="214" cy="250" />
+          </svg>
+
+        <div class="intro-body">
+          <div class="intro-fade">
+            <h1 class="intro-title">GO CLAIM your territory!</h1>
+          </div>
+          <div class="intro-actions">
+            <button class="btn-brand google" type="button" data-signin="google">
+              <svg viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+              </svg>
+              Continue with Google
+            </button>
+            <button class="btn-brand apple" type="button" data-signin="apple">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+              </svg>
+              Continue with Apple
+            </button>
+            <button class="link" type="button" data-signin="guest">Continue as a guest</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Home: brand top-left, map in the middle, actions at the bottom -->
+      <section class="screen home" data-screen="home" hidden>
+        <header class="home-bar">
+          <span class="home-brand">paper.irl</span>
+          <span class="home-mode" id="home-mode"></span>
+        </header>
+        <div class="home-hero" id="home-hero">
+          <!-- Teammate's campus art, framed on the territories. -->
+          <svg class="home-map" viewBox="0 120 400 460" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
           <defs>
-            <g id="minor-roads" fill="none" stroke-linecap="round">
+            <g id="hm-minor-roads" fill="none" stroke-linecap="round">
               <path d="M-10 120 H410 M-10 260 H340 M-10 560 H330 M-10 700 H350" />
               <path d="M70 -10 V870 M290 -10 V720 M230 260 V420 M120 560 V870" />
               <path d="M-10 505 Q120 470 230 420 M170 700 Q230 760 300 870" />
             </g>
-            <g id="major-roads" fill="none" stroke-linecap="round">
+            <g id="hm-major-roads" fill="none" stroke-linecap="round">
               <path d="M-10 420 H360" />
               <path d="M170 -10 V870" />
             </g>
@@ -68,10 +153,10 @@
             <rect x="182" y="716" width="40" height="40" rx="5" />
             <rect x="82" y="714" width="28" height="80" rx="5" />
           </g>
-          <use href="#minor-roads" class="m-road-edge" stroke-width="12" />
-          <use href="#minor-roads" class="m-road" stroke-width="8" />
-          <use href="#major-roads" class="m-major-edge" stroke-width="18" />
-          <use href="#major-roads" class="m-major" stroke-width="13" />
+          <use href="#hm-minor-roads" class="m-road-edge" stroke-width="12" />
+          <use href="#hm-minor-roads" class="m-road" stroke-width="8" />
+          <use href="#hm-major-roads" class="m-major-edge" stroke-width="18" />
+          <use href="#hm-major-roads" class="m-major" stroke-width="13" />
           <circle class="m-boundary" cx="185" cy="360" r="190" />
 
           <path class="t-fill" style="--t:#e85d04" d="M96 300 q30 -26 66 -10 q30 20 20 58 q-14 34 -52 30 q-40 -6 -44 -40 q-2 -24 10 -38z" />
@@ -85,98 +170,6 @@
           <circle class="t-dot" style="--t:#8b5cf6" cx="98" cy="470" r="7" />
           <circle class="t-dot" style="--t:#ec4899" cx="252" cy="500" r="7" />
         </svg>
-
-        <div class="intro-body">
-          <div class="intro-fade">
-            <h1 class="intro-title">GO CLAIM your territory!</h1>
-          </div>
-          <div class="intro-actions">
-            <button class="btn-brand google" type="button" data-signin="google">
-              <svg viewBox="0 0 48 48" aria-hidden="true">
-                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-              </svg>
-              Continue with Google
-            </button>
-            <button class="btn-brand apple" type="button" data-signin="apple">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
-              </svg>
-              Continue with Apple
-            </button>
-            <button class="link" type="button" data-signin="guest">Continue as a guest</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- Home: brand top-left, map in the middle, actions at the bottom -->
-      <section class="screen home" data-screen="home" hidden>
-        <header class="home-bar">
-          <span class="home-brand">paper.irl</span>
-          <span class="home-mode" id="home-mode"></span>
-        </header>
-        <div class="home-hero" id="home-hero">
-          <!-- Home's own scene: lakeside plaza; you loop out and claim (animated). -->
-          <svg class="home-map" viewBox="0 0 400 440" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-            <defs>
-              <g id="h-minor" fill="none" stroke-linecap="round">
-                <path d="M-10 70 H410 M-10 380 H410 M60 -10 V450 M330 -10 V450" />
-                <path d="M140 -10 Q150 120 120 200 T150 450" />
-                <path d="M200 70 Q260 120 330 110" />
-              </g>
-              <g id="h-major" fill="none" stroke-linecap="round">
-                <path d="M-20 330 L420 60" />
-              </g>
-              <path id="h-loop" d="M214 250 C 236 196, 300 168, 336 196 S 352 300, 300 316 S 236 312, 222 286" />
-              <mask id="h-draw">
-                <use href="#h-loop" class="h-draw-stroke" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" />
-              </mask>
-            </defs>
-            <rect class="m-land" width="400" height="440" />
-            <path class="h-lake" d="M-20 300 Q60 280 110 330 Q150 380 110 460 L-20 460 Z" />
-            <circle class="m-park" cx="300" cy="96" r="58" />
-            <path class="m-park" d="M24 96 h80 a8 8 0 0 1 8 8 v70 a8 8 0 0 1 -8 8 h-80 a8 8 0 0 1 -8 -8 v-70 a8 8 0 0 1 8 -8z" />
-            <g class="m-building">
-              <rect x="8" y="8" width="44" height="52" rx="5" />
-              <rect x="70" y="8" width="58" height="52" rx="5" />
-              <rect x="160" y="8" width="56" height="52" rx="5" />
-              <rect x="346" y="8" width="46" height="52" rx="5" />
-              <rect x="160" y="84" width="34" height="56" rx="5" />
-              <rect x="346" y="80" width="46" height="70" rx="5" />
-              <rect x="70" y="200" width="44" height="60" rx="5" />
-              <rect x="346" y="240" width="46" height="60" rx="5" />
-              <rect x="176" y="330" width="70" height="40" rx="5" />
-              <rect x="260" y="330" width="56" height="40" rx="5" />
-              <rect x="176" y="396" width="140" height="40" rx="5" />
-              <rect x="346" y="396" width="46" height="40" rx="5" />
-            </g>
-            <use href="#h-minor" class="m-road-edge" stroke-width="12" />
-            <use href="#h-minor" class="m-road" stroke-width="8" />
-            <use href="#h-major" class="m-major-edge" stroke-width="20" />
-            <use href="#h-major" class="m-major" stroke-width="14" />
-            <circle class="m-boundary" cx="210" cy="230" r="196" />
-
-            <!-- Other players -->
-            <path class="t-fill" style="--t:#8b5cf6" d="M60 120 q34 -18 58 6 q12 34 -12 54 q-34 12 -52 -12 q-10 -28 6 -48z" />
-            <circle class="t-dot" style="--t:#8b5cf6" cx="112" cy="166" r="6" />
-            <path class="t-fill" style="--t:#14b8a6" d="M262 60 q40 -10 58 18 q8 34 -20 48 q-36 6 -46 -24 q-4 -26 8 -42z" />
-            <path class="t-trail" style="--t:#14b8a6" d="M300 124 q-10 40 -50 56" />
-            <circle class="t-dot" style="--t:#14b8a6" cx="250" cy="180" r="6" />
-            <circle class="h-ring" cx="80" cy="360" r="26" />
-            <circle class="t-dot h-ghost" style="--t:#ec4899" cx="96" cy="388" r="6" />
-
-            <!-- You: land, the loop being drawn, then the claim filling in -->
-            <path class="h-claim" d="M214 250 C 236 196, 300 168, 336 196 S 352 300, 300 316 S 236 312, 222 286 Z" />
-            <path class="t-fill" style="--t:#e85d04" d="M150 214 q46 -24 74 14 q16 40 -12 66 q-40 18 -68 -10 q-18 -36 6 -70z" />
-            <use href="#h-loop" class="t-trail h-trail" style="--t:#e85d04" mask="url(#h-draw)" />
-            <circle class="t-dot h-runner" style="--t:#e85d04" r="9">
-              <animateMotion dur="7s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.7;1" calcMode="linear">
-                <mpath href="#h-loop" />
-              </animateMotion>
-            </circle>
-          </svg>
         </div>
         <div class="home-actions">
           <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
