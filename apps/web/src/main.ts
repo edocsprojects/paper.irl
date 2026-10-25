@@ -531,13 +531,27 @@ async function main() {
     }),
   );
 
-  function newSimMatch(cfg: Config, center: LatLon): LocalMatch {
+  function newSimMatch(cfg: Config, center: LatLon, fill = true): LocalMatch {
     return new LocalMatch({
       arena: buildArena({ radiusM: cfg.zoneFt / FT_PER_M, centerLat: center.lat, centerLon: center.lon }),
       youName: profile.name,
       players: cfg.max,
       durationMs: cfg.mins * 60_000,
+      fill,
     });
+  }
+
+  /** Simulated lobby: players drop in one by one, like friends entering the code. */
+  let arrivalTimer = 0;
+  function scheduleArrival() {
+    window.clearTimeout(arrivalTimer);
+    arrivalTimer = window.setTimeout(() => {
+      if (session?.kind !== "sim" || phase !== "lobby") return;
+      if (session.match.addPlayer()) {
+        paintUi(true);
+        scheduleArrival();
+      }
+    }, 900 + Math.random() * 1800);
   }
 
   $("btn-create-go").addEventListener("click", async () => {
@@ -545,9 +559,10 @@ async function main() {
     const center = here ?? { lat: KELLER.lat, lon: KELLER.lon };
     leaveSession();
     if (cfg.sim) {
-      // Simulation: bots fill the game — straight to the countdown, no lobby.
-      session = { kind: "sim", match: newSimMatch(cfg, center), config: cfg, center };
-      startSim();
+      // Simulation: same lobby as a real game; players join over a few seconds.
+      session = { kind: "sim", match: newSimMatch(cfg, center, false), config: cfg, center };
+      enterLobby();
+      scheduleArrival();
       return;
     }
     if (!profile.useLocation) {
@@ -627,6 +642,11 @@ async function main() {
   $("btn-lobby-start").addEventListener("click", async () => {
     if (!session) return;
     if (session.kind === "sim") {
+      if (session.match.state.seats.size < 2) {
+        toast("Wait for at least one more player");
+        return;
+      }
+      window.clearTimeout(arrivalTimer);
       session.match.start();
       beginCountdown();
       return;
@@ -648,6 +668,7 @@ async function main() {
 
   function leaveSession() {
     resetSnackbar();
+    window.clearTimeout(arrivalTimer);
     if (session?.kind === "live" || (session?.kind === "event" && !session.sim)) live.leave();
     if (session?.kind === "event" && session.sim) session.sim.youActive = false;
     session = null;
@@ -1016,14 +1037,16 @@ async function main() {
       const rows: string[] = [];
       for (let i = 0; i < max; i++) {
         const seat = seats[i] ?? null;
-        rows.push(rowHtml(seat, i, me, seat && i === 0 ? '<span class="host-tag">HOST</span>' : seat?.bot ? "bot" : ""));
+        rows.push(rowHtml(seat, i, me, seat && i === 0 ? '<span class="host-tag">HOST</span>' : ""));
       }
       $("lobby-list").innerHTML = rows.join("");
       $("btn-lobby-start").classList.toggle("hidden", !isHost());
       $("lobby-hint").textContent = live.serverError && session?.kind === "live"
         ? live.serverError
         : isHost()
-          ? "Start when everyone's in."
+          ? seats.length < 2
+            ? "Share the code — waiting for players to join…"
+            : "Start when everyone's in."
           : "Waiting for the host to start…";
     }
 

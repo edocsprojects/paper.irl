@@ -93,6 +93,8 @@ export type LocalMatchOpts = {
   players: number;
   durationMs: number;
   seed?: number;
+  /** False: start with just you; players arrive via addPlayer() (lobby). */
+  fill?: boolean;
 };
 
 /**
@@ -111,17 +113,23 @@ export class LocalMatch {
   constructor(opts: LocalMatchOpts) {
     const seed = opts.seed ?? Math.floor(Math.random() * 1e9);
     this.rand = mulberry32(seed);
-    const code = `SIM${seed % 1000}`;
+    const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const code = Array.from({ length: 6 }, () => letters[Math.floor(this.rand() * letters.length)]).join("");
     resetBotMemory(code);
     this.state = createLobby(code, opts.arena, {
       durationMs: opts.durationMs,
       maxSeats: Math.max(2, Math.min(8, opts.players)),
     });
     this.youId = opts.youName !== undefined ? joinLobby(this.state, opts.youName).seat.id : null;
-    while (this.state.seats.size < this.state.maxSeats) {
-      joinLobby(this.state, `Player ${this.state.nextSeatId}`, { bot: true });
-    }
+    if (opts.fill !== false) while (this.addPlayer());
     this.nowMs = Date.now();
+  }
+
+  /** Another player joins the lobby; false when it's full or already started. */
+  addPlayer(): boolean {
+    if (this.state.phase !== "open" || this.state.seats.size >= this.state.maxSeats) return false;
+    joinLobby(this.state, `Player ${this.state.nextSeatId}`, { bot: true });
+    return true;
   }
 
   /** Lobby → live (everyone spawns on their own ring slot). */

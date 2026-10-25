@@ -35,32 +35,68 @@ type RaidPlan = {
 const HUNT_COMMIT_MS = 5000;
 /** Share of raids that are big, greedy loops. */
 const BOLD_RAID_CHANCE = 0.35;
-/** Spacing between loop waypoints (m). */
-const LOOP_STEP_M = 14;
+/** Waypoints closer than this count as reached (keeps corners crisp). */
+const WAYPOINT_REACHED_M = 3;
 
 /**
- * Waypoints on an arc around home: radius + sweep pick how much land the
- * loop will enclose when the bot walks back in.
+ * Street-grid bearing for a lobby (radians). Real players walk along streets,
+ * so loops are blocks: straight legs with ~90° corners on this grid.
+ */
+function gridAngle(state: LobbyState): number {
+  const key = `${state.arena.centerLat.toFixed(3)},${state.arena.centerLon.toFixed(3)}`;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  // Mostly north–south grids, some cities sit at an angle.
+  return (h & 3) === 0 ? (((h >>> 2) % 90) * Math.PI) / 180 : 0;
+}
+
+/** Offset `m` metres from `p` along grid bearing `a` (0 = east, π/2 = north). */
+function along(p: LatLon, a: number, m: number): LatLon {
+  return fromLocalM(p.lat, p.lon, Math.cos(a) * m, Math.sin(a) * m);
+}
+
+/**
+ * Corners of a walk around the block, starting next to home: out along one
+ * street, across, and partway back. Most raids are modest bites; some are
+ * bold sweeps around a bigger block (more land, longer trail to cut) —
+ * paper.io's risk/reward. Banking walks the last leg(s) home.
  */
 function planLoop(state: LobbyState, home: LatLon, leashM: number, rand: () => number): LatLon[] {
   const bold = rand() < BOLD_RAID_CHANCE;
   const maxR = Math.max(24, Math.min(leashM * 0.8, state.arena.radiusM * 0.45));
-  const r = bold
-    ? Math.min(maxR, 45 + rand() * 50) // big sweep: 45–95 m out
-    : Math.min(maxR, 24 + rand() * 18); // modest bite: 24–42 m out
-  const sweep = bold
-    ? ((200 + rand() * 120) * Math.PI) / 180 // 200–320°
-    : ((90 + rand() * 90) * Math.PI) / 180; // 90–180°
-  const dir = rand() < 0.5 ? 1 : -1;
-  const a0 = rand() * Math.PI * 2;
-  const n = Math.max(3, Math.ceil((r * sweep) / LOOP_STEP_M));
-  const inner = { ...state.arena, radiusM: state.arena.radiusM - 6 };
-  const pts: LatLon[] = [];
-  for (let i = 0; i <= n; i++) {
-    const a = a0 + dir * (sweep * i) / n;
-    pts.push(clampToArena(inner, fromLocalM(home.lat, home.lon, Math.cos(a) * r, Math.sin(a) * r)));
+  const out = Math.min(maxR, bold ? 50 + rand() * 50 : 30 + rand() * 20);
+  const across = Math.min(maxR, bold ? 40 + rand() * 45 : 22 + rand() * 18);
+  const g = gridAngle(state) + (Math.floor(rand() * 4) * Math.PI) / 2;
+  const side = rand() < 0.5 ? 1 : -1;
+  const perp = g + (side * Math.PI) / 2;
+  // People don't walk perfect rectangles: corners land a few metres off.
+  const wob = () => (rand() - 0.5) * 6;
+  const a = along(along(home, g, out + wob()), perp, wob());
+  const b = along(a, perp, across + wob());
+  const pts = [a, b];
+  if (bold && rand() < 0.5) {
+    // Around a second block before heading back.
+    pts.push(along(b, g + Math.PI, out * (0.3 + rand() * 0.3)));
+    pts.push(along(pts[2]!, perp, across * (0.4 + rand() * 0.4)));
+  } else {
+    pts.push(along(b, g + Math.PI, out * (0.45 + rand() * 0.35)));
   }
-  return pts;
+  const inner = { ...state.arena, radiusM: state.arena.radiusM - 6 };
+  return pts.map((p) => clampToArena(inner, p));
+}
+
+/**
+ * Route along the grid: if the target is off-axis, aim first for the corner
+ * of an L (walk down the street, then turn), like someone on sidewalks.
+ */
+function gridRoute(state: LobbyState, pos: LatLon, target: LatLon): LatLon {
+  const g = gridAngle(state);
+  const v = toLocalM(pos.lat, pos.lon, target.lat, target.lon);
+  const u = v.x * Math.cos(g) + v.y * Math.sin(g);
+  const w = -v.x * Math.sin(g) + v.y * Math.cos(g);
+  if (Math.abs(u) < 8 || Math.abs(w) < 8) return target;
+  // Longer leg first; the corner point stays fixed while we walk toward it.
+  return Math.abs(u) >= Math.abs(w) ? along(pos, g, u) : along(pos, g + Math.PI / 2, w);
 }
 const STUCK_WINDOW_MS = 6000;
 const STUCK_MIN_M = 4;
@@ -72,9 +108,15 @@ const keyOf = (state: LobbyState, id: SeatId) => `${state.code}#${id}`;
 
 /** Real jog pace; lobby.speedScale multiplies it for demos. */
 const BASE_SPEED_MPS = 3;
-/** Max turn rate — bots curve like a person instead of zig-zagging. */
-const MAX_TURN_RAD_PER_S = 2.4;
+/** Turn rate: quick enough for street corners, never an instant snap. */
+const MAX_TURN_RAD_PER_S = 3.6;
+/** How fast a bot gets back up to pace after a corner or stop (m/s²). */
+const ACCEL_MPS2 = 1.6;
 const lastStepMs = new Map<string, number>();
+
+/** Per-bot motion state: current speed, a pause (waiting to cross), pace drift. */
+type Gait = { speed: number; pauseUntilMs: number; drift: number };
+const gaits = new Map<string, Gait>();
 
 function stepSeconds(state: LobbyState, seat: Seat, nowMs: number): number {
   const key = keyOf(state, seat.id);
@@ -84,10 +126,28 @@ function stepSeconds(state: LobbyState, seat: Seat, nowMs: number): number {
   return Math.max(0.05, Math.min(0.5, (nowMs - last) / 1000));
 }
 
-/** Each bot keeps its own steady pace (±15%) so they don't move in lockstep. */
+/** Each bot has its own pace (brisk walker … runner) so they never move in lockstep. */
 function paceMps(state: LobbyState, seat: Seat): number {
-  const personal = 0.85 + ((seat.id * 7919) % 31) / 100;
+  const personal = 0.78 + ((seat.id * 7919) % 41) / 100; // 0.78–1.18
   return BASE_SPEED_MPS * personal * state.speedScale;
+}
+
+function gaitOf(state: LobbyState, seat: Seat): Gait {
+  const key = keyOf(state, seat.id);
+  let g = gaits.get(key);
+  if (!g) {
+    g = { speed: paceMps(state, seat) * 0.5, pauseUntilMs: 0, drift: 1 };
+    gaits.set(key, g);
+  }
+  return g;
+}
+
+/** Stop for a moment (waiting at a crossing, catching breath) — in sim time. */
+function maybePause(state: LobbyState, seat: Seat, rand: () => number, chance: number, nowMs: number) {
+  if (rand() >= chance) return;
+  const g = gaitOf(state, seat);
+  g.pauseUntilMs = nowMs + (1200 + rand() * 2800) / Math.max(1, state.speedScale);
+  g.speed = 0;
 }
 
 function angleDiff(a: number, b: number): number {
@@ -208,14 +268,22 @@ function stepToward(
   const arena = state.arena;
   const key = keyOf(state, seat.id);
   const dt = stepSeconds(state, seat, nowMs);
+  const gait = gaitOf(state, seat);
+  if (nowMs < gait.pauseUntilMs) return pos;
   const local = toLocalM(pos.lat, pos.lon, goal.lat, goal.lon);
   const dist = Math.hypot(local.x, local.y);
-  const desired = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.06;
+  const desired = Math.atan2(local.y, local.x);
   const current = headings.get(key) ?? desired;
+  const turn = angleDiff(desired, current);
   const maxTurn = MAX_TURN_RAD_PER_S * dt;
-  const base = current + Math.max(-maxTurn, Math.min(maxTurn, angleDiff(desired, current)));
-  const stepM = Math.min(paceMps(state, seat) * dt, Math.max(dist, 0.05));
-  const heading = base;
+  const heading = current + Math.max(-maxTurn, Math.min(maxTurn, turn));
+  // Pace drifts a little over time; slow down through corners, then speed up.
+  gait.drift = Math.max(0.85, Math.min(1.12, gait.drift + (rand() - 0.5) * 0.04 * dt * 5));
+  const cruise = paceMps(state, seat) * gait.drift;
+  const target = Math.abs(turn) > 0.6 ? cruise * 0.55 : cruise;
+  const accel = ACCEL_MPS2 * state.speedScale * state.speedScale * dt;
+  gait.speed = gait.speed < target ? Math.min(target, gait.speed + accel) : Math.max(target, gait.speed - accel * 2);
+  const stepM = Math.min(Math.max(gait.speed, cruise * 0.3) * dt, Math.max(dist, 0.05));
   const next = clampToArena(
     arena,
     fromLocalM(pos.lat, pos.lon, Math.cos(heading) * stepM, Math.sin(heading) * stepM),
@@ -357,10 +425,17 @@ function wanderStep(
   nowMs: number,
 ): LatLon {
   const arena = state.arena;
-  const pos =
+  const reported =
     seat.position ??
     seat.respawnAt ??
     ({ lat: arena.centerLat, lon: arena.centerLon } as LatLon);
+  // Steer from where the bot really is, not its noisy GPS fix (unless the
+  // game moved it, e.g. a respawn or a clamp at the boundary).
+  const truth = truths.get(keyOf(state, seat.id));
+  const pos =
+    truth && seat.position && haversineM(truth.lat, truth.lon, seat.position.lat, seat.position.lon) < 8
+      ? truth
+      : reported;
 
   if (seat.mode === "toPlant" || seat.mode === "joining" || seat.mode === "ghost") {
     raids.delete(keyOf(state, seat.id));
@@ -380,7 +455,7 @@ function wanderStep(
     // Sometimes exit toward someone's open trail (committed for a few s).
     const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.07);
     if (hunt) return stepToward(state, seat, pos, hunt, rand, nowMs);
-    return stepToward(state, seat, pos, plan.goal, rand, nowMs);
+    return stepToward(state, seat, pos, gridRoute(state, pos, plan.goal), rand, nowMs);
   }
 
   if (seat.mode === "trailing" && seat.owned.length) {
@@ -388,8 +463,9 @@ function wanderStep(
     const home = plan.home;
     // Walk the loop's waypoints; once it's done, head home to bank it.
     let toGoal = toLocalM(pos.lat, pos.lon, plan.goal.lat, plan.goal.lon);
-    while (Math.hypot(toGoal.x, toGoal.y) < 5 && plan.loopIdx < plan.loop.length) {
+    while (Math.hypot(toGoal.x, toGoal.y) < WAYPOINT_REACHED_M && plan.loopIdx < plan.loop.length) {
       plan.loopIdx++;
+      maybePause(state, seat, rand, 0.06, nowMs); // waiting to cross at the corner
       const next = plan.loop[plan.loopIdx];
       if (!next) break;
       plan.goal = next;
@@ -405,7 +481,8 @@ function wanderStep(
     }
 
     if (readyToBank) {
-      return stepToward(state, seat, pos, homeEntry(state, seat, pos) ?? home, rand, nowMs);
+      // Walk home down the streets (an L), not as the crow flies.
+      return stepToward(state, seat, pos, gridRoute(state, pos, homeEntry(state, seat, pos) ?? home), rand, nowMs);
     }
     void goalDist;
     const fromHome = haversineM(home.lat, home.lon, pos.lat, pos.lon);
@@ -434,7 +511,10 @@ export function wanderSeat(
   if (!seat || seat.mode === "left") return [];
 
   const autoPlant = opts?.autoPlant !== false;
+  const key = keyOf(state, seatId);
   const pos = wanderStep(state, seat, rand, autoPlant, nowMs);
+  truths.set(key, pos);
+  const fix = gpsFix(state, key, pos, seat.mode === "safe" || seat.mode === "trailing", rand, nowMs);
   // Remember open trail so we only reset the raid after a bank — never while
   // still walking out of the starter (that trapped bots inside the blob).
   const hadOpenTrail = seat.trail.length > 0 || seat.mode === "trailing";
@@ -443,9 +523,9 @@ export function wanderSeat(
     state,
     seatId,
     {
-      lat: pos.lat + (rand() - 0.5) * 0.000002,
-      lon: pos.lon + (rand() - 0.5) * 0.000002,
-      accuracyM: 4 + rand() * 2,
+      lat: fix.lat,
+      lon: fix.lon,
+      accuracyM: 4 + rand() * 4,
       speedMps: 1.4 + rand() * 2.2,
       clientTsMs: nowMs,
       mock: true,
@@ -456,13 +536,46 @@ export function wanderSeat(
 
   if (hadOpenTrail && seat.mode === "safe" && seat.trail.length === 0) {
     raids.delete(keyOf(state, seatId));
+    // Just banked: catch a breath / look around before heading out again.
+    maybePause(state, seat, rand, 0.4, nowMs);
   }
 
   return effects;
 }
 
+/** Real phones wander a metre or two around the truth, slowly (not white noise). */
+const GPS_SIGMA_M = 1.1;
+const GPS_TAU_S = 4;
+const truths = new Map<string, LatLon>();
+const gpsNoise = new Map<string, { x: number; y: number; atMs: number }>();
+
+function gauss(rand: () => number): number {
+  return Math.sqrt(-2 * Math.log(Math.max(1e-9, rand()))) * Math.cos(2 * Math.PI * rand());
+}
+
+/** The fix a phone would report at `pos`: a correlated drift, kept inside the circle. */
+function gpsFix(state: LobbyState, key: string, pos: LatLon, on: boolean, rand: () => number, nowMs: number): LatLon {
+  let n = gpsNoise.get(key);
+  if (!on) {
+    gpsNoise.delete(key);
+    return pos;
+  }
+  if (!n) n = { x: 0, y: 0, atMs: nowMs };
+  // Wall-clock-ish: the drift changes with real seconds, not sim speed.
+  const dt = Math.max(0, Math.min(1, (nowMs - n.atMs) / 1000 / Math.max(1, state.speedScale)));
+  const k = dt / GPS_TAU_S;
+  const kick = GPS_SIGMA_M * Math.sqrt(2 * k);
+  n.x += -n.x * k + kick * gauss(rand);
+  n.y += -n.y * k + kick * gauss(rand);
+  n.atMs = nowMs;
+  gpsNoise.set(key, n);
+  const inner = { ...state.arena, radiusM: state.arena.radiusM - 1 };
+  return clampToArena(inner, fromLocalM(pos.lat, pos.lon, n.x, n.y));
+}
+
 /** Forget bot memory for a lobby (rematch / delete). */
 export function resetBotMemory(code: string) {
+  for (const m of [gaits, truths, gpsNoise]) for (const k of [...m.keys()]) if (k.startsWith(`${code}#`)) m.delete(k);
   for (const k of [...headings.keys()]) if (k.startsWith(`${code}#`)) headings.delete(k);
   for (const k of [...raids.keys()]) if (k.startsWith(`${code}#`)) raids.delete(k);
   for (const k of [...lastStepMs.keys()]) if (k.startsWith(`${code}#`)) lastStepMs.delete(k);
