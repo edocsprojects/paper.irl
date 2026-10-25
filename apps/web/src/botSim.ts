@@ -5,11 +5,13 @@ import {
   startLobby,
   tickLobby,
   topScores,
+  type Effect,
   type LobbyGraph,
   type LobbyState,
   type Seat,
 } from "@paper-irl/rules";
 
+export const YOU_ID = 1;
 const BOTS = 8;
 
 function mulberry32(a: number) {
@@ -41,8 +43,10 @@ export interface SimSnapshot {
   endsAtMs: number;
   nowMs: number;
   remainingMs: number;
+  youNeedSpawn: boolean;
   seats: SimSnapshotSeat[];
-  top3: { nickname: string; color: string; areaM2: number }[];
+  top3: { id: number; nickname: string; color: string; areaM2: number }[];
+  you: SimSnapshotSeat | null;
 }
 
 function seatLatLon(state: LobbyState, seat: Seat): { lat: number; lon: number } {
@@ -60,11 +64,30 @@ function botStep(
   seat: Seat,
   rand: () => number,
   now: number,
-) {
+): Effect[] {
   const graph = state.graph;
   let nodeId = seat.headNode ?? seat.respawnNode ?? 0;
   if (seat.mode === "toPlant" && seat.respawnNode !== null) {
     nodeId = seat.respawnNode;
+  } else if (seat.id === YOU_ID) {
+    // Player 1 demo AI: expand carefully so territory stays readable on camera.
+    const owned = [...seat.ownedEdges];
+    if (seat.mode === "trailing" && owned.length) {
+      const home = graph.edges[owned[Math.floor(rand() * owned.length)]!]!;
+      nodeId = rand() < 0.5 ? home.a : home.b;
+    } else if (seat.mode === "safe" && rand() < 0.55) {
+      const edges = graph.nodeEdges.get(nodeId) ?? [];
+      if (edges.length) {
+        const e = graph.edges[edges[Math.floor(rand() * edges.length)]!]!;
+        nodeId = e.a === nodeId ? e.b : e.a;
+      }
+    } else {
+      const edges = graph.nodeEdges.get(nodeId) ?? [];
+      if (edges.length) {
+        const e = graph.edges[edges[Math.floor(rand() * edges.length)]!]!;
+        nodeId = e.a === nodeId ? e.b : e.a;
+      }
+    }
   } else if (seat.mode === "safe" && rand() < 0.45) {
     const prey = [...state.seats.values()].find(
       (s) => s.id !== seat.id && s.mode === "trailing" && s.headEdge !== null,
@@ -89,7 +112,7 @@ function botStep(
     }
   }
   const n = graph.nodes[nodeId]!;
-  applyFix(
+  return applyFix(
     state,
     seat.id,
     {
@@ -102,6 +125,12 @@ function botStep(
     },
     now,
   );
+}
+
+function youAwaitingSpawn(state: LobbyState): boolean {
+  const you = state.seats.get(YOU_ID);
+  if (!you) return false;
+  return you.mode === "toPlant" || you.mode === "joining" || you.mode === "ghost";
 }
 
 export class CampusSim {
@@ -118,8 +147,9 @@ export class CampusSim {
       durationMs: 15 * 60 * 1000,
       maxSeats: BOTS,
     });
-    for (let i = 0; i < BOTS; i++) {
-      joinLobby(this.state, `Bot${i + 1}`);
+    joinLobby(this.state, "You");
+    for (let i = 2; i <= BOTS; i++) {
+      joinLobby(this.state, `Bot${i}`);
     }
     this.t0 = Date.UTC(2026, 9, 24, 18, 0, 0);
     startLobby(this.state, this.t0);
@@ -134,48 +164,92 @@ export class CampusSim {
       durationMs: 15 * 60 * 1000,
       maxSeats: BOTS,
     });
-    for (let i = 0; i < BOTS; i++) {
-      joinLobby(this.state, `Bot${i + 1}`);
+    joinLobby(this.state, "You");
+    for (let i = 2; i <= BOTS; i++) {
+      joinLobby(this.state, `Bot${i}`);
     }
     startLobby(this.state, this.t0);
     this.nowMs = this.t0;
   }
 
-  /** Advance one simulated second. */
-  tickOnce() {
-    if (this.state.phase === "ended") return;
-    this.nowMs += 1000;
-    for (const seat of this.state.seats.values()) {
-      botStep(this.state, seat, this.rand, this.nowMs);
+  /** Player 1 taps Spawn → plant at respawn marker. */
+  spawnYou(): Effect[] {
+    const you = this.state.seats.get(YOU_ID);
+    if (!you || this.state.phase !== "live") return [];
+    if (you.mode === "ghost") {
+      you.mode = "toPlant";
+      you.ghostUntilMs = null;
     }
-    // Occasional forced hunt so cuts show up in a short watch.
+    if (you.mode !== "toPlant" && you.mode !== "joining") return [];
+    const nodeId = you.respawnNode;
+    if (nodeId === null) return [];
+    const n = this.state.graph.nodes[nodeId]!;
+    return applyFix(
+      this.state,
+      YOU_ID,
+      {
+        lat: n.lat,
+        lon: n.lon,
+        accuracyM: 5,
+        speedMps: 1,
+        clientTsMs: this.nowMs,
+        mock: true,
+      },
+      this.nowMs,
+    );
+  }
+
+  /** Advance one simulated second. Returns game effects for snackbars. */
+  tickOnce(): Effect[] {
+    if (this.state.phase === "ended") return [];
+    this.nowMs += 1000;
+    const effects: Effect[] = [];
+    const pauseYou = youAwaitingSpawn(this.state);
+
+    for (const seat of this.state.seats.values()) {
+      if (seat.id === YOU_ID && pauseYou) continue;
+      effects.push(...botStep(this.state, seat, this.rand, this.nowMs));
+    }
+
+    // Forced hunts among bots (not requiring You to move).
     if (Math.floor((this.nowMs - this.t0) / 1000) % 5 === 0) {
       const prey = [...this.state.seats.values()].find(
-        (s) => s.mode === "trailing" && (s.trail.length > 0 || s.headEdge !== null),
+        (s) =>
+          s.id !== YOU_ID &&
+          s.mode === "trailing" &&
+          (s.trail.length > 0 || s.headEdge !== null),
       );
       const hunter = [...this.state.seats.values()].find(
-        (s) => s.mode === "safe" && prey && s.id !== prey.id,
+        (s) =>
+          s.id !== YOU_ID &&
+          s.mode === "safe" &&
+          prey &&
+          s.id !== prey.id,
       );
       if (prey && hunter) {
         const edgeId = prey.headEdge ?? prey.trail[prey.trail.length - 1]!;
         const e = this.state.graph.edges[edgeId]!;
         const n = this.state.graph.nodes[e.a]!;
-        applyFix(
-          this.state,
-          hunter.id,
-          {
-            lat: n.lat,
-            lon: n.lon,
-            accuracyM: 5,
-            speedMps: 2,
-            clientTsMs: this.nowMs,
-            mock: true,
-          },
-          this.nowMs,
+        effects.push(
+          ...applyFix(
+            this.state,
+            hunter.id,
+            {
+              lat: n.lat,
+              lon: n.lon,
+              accuracyM: 5,
+              speedMps: 2,
+              clientTsMs: this.nowMs,
+              mock: true,
+            },
+            this.nowMs,
+          ),
         );
       }
     }
-    tickLobby(this.state, this.nowMs);
+
+    effects.push(...tickLobby(this.state, this.nowMs));
+    return effects;
   }
 
   snapshot(): SimSnapshot {
@@ -197,6 +271,7 @@ export class CampusSim {
       };
     });
     const top3 = topScores(this.state, 3).map((s) => ({
+      id: s.id,
       nickname: s.nickname,
       color: s.color,
       areaM2: s.areaM2,
@@ -207,8 +282,10 @@ export class CampusSim {
       endsAtMs: ends,
       nowMs: this.nowMs,
       remainingMs: Math.max(0, ends - this.nowMs),
+      youNeedSpawn: youAwaitingSpawn(this.state) && this.state.phase === "live",
       seats,
       top3,
+      you: seats.find((s) => s.id === YOU_ID) ?? null,
     };
   }
 }
