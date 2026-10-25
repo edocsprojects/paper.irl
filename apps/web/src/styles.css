@@ -1240,14 +1240,62 @@ select {
 }
 
 .return-game {
+  appearance: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  padding: 0.6rem 0.6rem 0.6rem 1rem;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.8rem 1rem;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 14px;
-  background: var(--surface);
-  font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.return-game:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--paper));
+}
+
+.live-dot {
+  flex: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: live-pulse 1.6s ease-out infinite;
+}
+
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  100% { box-shadow: 0 0 0 0.55rem transparent; }
+}
+
+.return-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.return-text strong {
+  font-size: 0.98rem;
+}
+
+.return-text span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.return-go {
+  font-size: 1.6rem;
+  line-height: 1;
+  color: var(--accent);
 }
 
 .return-game.hidden {

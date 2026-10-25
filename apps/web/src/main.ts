@@ -286,7 +286,7 @@ async function main() {
     });
   });
   $("btn-join").addEventListener("click", () => show("join"));
-  $("btn-return").addEventListener("click", () =>
+  $("return-game").addEventListener("click", () =>
     show(phase === "lobby" ? "lobby" : phase === "results" ? "results" : "game"),
   );
 
@@ -757,6 +757,18 @@ async function main() {
     if (screen === "home") {
       const inGame = !!session && phase !== null;
       $("return-game").classList.toggle("hidden", !inGame);
+      if (inGame) {
+        const g = snap();
+        const left =
+          phase === "lobby"
+            ? "In the lobby"
+            : phase === "results"
+              ? "Game over"
+              : g
+                ? `${inEvent() ? hudCountdown(g.remainingMs) : formatMs(g.remainingMs)} left`
+                : "";
+        $("return-sub").textContent = left ? `${left} · Tap to return` : "Tap to return";
+      }
       $("home-mode").textContent = "";
     }
 
