@@ -19,6 +19,7 @@
     <div id="app" class="phone">
       <!-- Intro: illustrated campus map that fades into the sign-in buttons -->
       <section class="screen intro" data-screen="intro">
+        <header class="intro-brand">paper.irl</header>
         <svg class="intro-map" viewBox="0 0 400 860" preserveAspectRatio="xMidYMin slice" aria-hidden="true">
           <defs>
             <g id="minor-roads" fill="none" stroke-linecap="round">
@@ -110,11 +111,14 @@
         </div>
       </section>
 
-      <!-- Home: Create / Join (your flow, his look) -->
+      <!-- Home: brand top-left, map in the middle, actions at the bottom -->
       <section class="screen home" data-screen="home" hidden>
+        <header class="home-bar">
+          <span class="home-brand">paper.irl</span>
+          <span class="home-mode" id="home-mode"></span>
+        </header>
         <div class="home-hero" id="home-hero"></div>
-        <div class="home-body">
-          <h1 class="home-title">paper.irl</h1>
+        <div class="home-actions">
           <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
           <div class="return-game hidden" id="return-game">
             <span>Game in progress</span>
@@ -124,7 +128,7 @@
           <button class="btn big" type="button" id="btn-join">Join game</button>
           <div class="soon-card">
             <span class="soon-tag">Coming soon</span>
-            <strong>Events</strong>
+            <strong>Community Events</strong>
             <span>City-wide weekly claims with a live leaderboard.</span>
           </div>
         </div>
@@ -143,9 +147,9 @@
         </div>
         <p class="section-label">Radius</p>
         <div class="segmented three" role="radiogroup" aria-label="Radius">
-          <button type="button" role="radio" data-zone="600">600 ft</button>
+          <button type="button" role="radio" data-zone="500">500 ft</button>
           <button type="button" role="radio" data-zone="1000">1,000 ft</button>
-          <button type="button" role="radio" data-zone="1600">1,600 ft</button>
+          <button type="button" role="radio" data-zone="1500">1,500 ft</button>
         </div>
         <p class="section-label">Max players</p>
         <div class="segmented three" role="radiogroup" aria-label="Max players">
@@ -158,17 +162,6 @@
           <button type="button" role="radio" data-mins="5">5 min</button>
           <button type="button" role="radio" data-mins="10">10 min</button>
           <button type="button" role="radio" data-mins="15">15 min</button>
-        </div>
-        <label class="setting-row">
-          <span>Simulation</span>
-          <input id="sim-toggle" class="switch" type="checkbox" />
-        </label>
-        <div class="setting-block hidden" id="sim-speed">
-          <div class="speed-head">
-            <span>Speed</span>
-            <strong id="speed-value">1×</strong>
-          </div>
-          <input type="range" min="1" max="20" step="1" id="speed-range" aria-label="Simulation speed" />
         </div>
         <p class="hint" id="create-hint"></p>
         <button class="btn primary big" type="button" id="btn-create-go">Create</button>
@@ -273,6 +266,20 @@
           <button class="btn primary" type="submit" id="btn-save-name" disabled>Save</button>
         </form>
         <p class="hint" id="name-hint"></p>
+
+        <p class="section-label">Game mode</p>
+        <div class="segmented" role="radiogroup" aria-label="Game mode">
+          <button type="button" role="radio" data-mode="gps">Real GPS</button>
+          <button type="button" role="radio" data-mode="demo">Simulation</button>
+        </div>
+        <div class="setting-block" id="sim-speed">
+          <div class="speed-head">
+            <span>Simulation speed</span>
+            <strong id="speed-value">1×</strong>
+          </div>
+          <input type="range" min="1" max="20" step="1" id="speed-range" aria-label="Simulation speed" />
+          <p class="hint">Simulation: bots fill the game and you auto-walk. 1× is jogging pace.</p>
+        </div>
 
         <p class="section-label">Appearance</p>
         <label class="setting-row">

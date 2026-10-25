@@ -56,6 +56,7 @@ const profile = loadProfile();
 document.documentElement.dataset.theme = profile.theme;
 
 type Config = { zoneFt: number; max: number; mins: number; sim: boolean; speed: number };
+const isSim = () => profile.mode === "demo";
 
 /** The game you're in (lobby, countdown, playing or results). */
 type Session =
@@ -71,7 +72,9 @@ async function main() {
   let screen: Screen = "intro";
   let session: Session | null = null;
   let phase: Phase | null = null;
-  let config: Config = { zoneFt: 1000, max: 8, mins: 10, sim: false, speed: profile.demoSpeed };
+  let config = { zoneFt: 1000, max: 8, mins: 10 };
+  /** Create-time settings + Simulation (from Settings). */
+  const fullConfig = (): Config => ({ ...config, sim: isSim(), speed: profile.demoSpeed });
   let here: LatLon | null = null;
   let countdownEnd = 0;
   let plantedOnce = false;
@@ -254,19 +257,22 @@ async function main() {
       }),
     );
   }
-  const simToggle = $<HTMLInputElement>("sim-toggle");
-  simToggle.addEventListener("change", () => {
-    config.sim = simToggle.checked;
-    paintUi(true);
-  });
+  // Simulation lives in Settings.
   const speedRange = $<HTMLInputElement>("speed-range");
-  speedRange.value = String(config.speed);
+  speedRange.value = String(profile.demoSpeed);
   speedRange.addEventListener("input", () => {
-    config.speed = Number(speedRange.value) || 1;
-    profile.demoSpeed = config.speed;
+    profile.demoSpeed = Number(speedRange.value) || 1;
     saveProfile(profile);
+    if (session?.kind === "sim") session.config.speed = profile.demoSpeed;
     paintUi(true);
   });
+  document.querySelectorAll<HTMLElement>("[data-mode]").forEach((el) =>
+    el.addEventListener("click", () => {
+      profile.mode = el.dataset.mode as "gps" | "demo";
+      saveProfile(profile);
+      paintUi(true);
+    }),
+  );
 
   function newSimMatch(cfg: Config, center: LatLon): LocalMatch {
     return new LocalMatch({
@@ -278,12 +284,13 @@ async function main() {
   }
 
   $("btn-create-go").addEventListener("click", async () => {
-    const cfg = { ...config };
+    const cfg = fullConfig();
     const center = here ?? { lat: KELLER.lat, lon: KELLER.lon };
     leaveSession();
     if (cfg.sim) {
+      // Simulation: bots fill the game — straight to the countdown, no lobby.
       session = { kind: "sim", match: newSimMatch(cfg, center), config: cfg, center };
-      enterLobby();
+      startSim();
       return;
     }
     if (!profile.useLocation) {
@@ -342,6 +349,15 @@ async function main() {
       btn.disabled = false;
     }
   });
+
+  function startSim() {
+    if (session?.kind !== "sim") return;
+    phase = "lobby";
+    plantedOnce = false;
+    resultsSnap = null;
+    session.match.start();
+    beginCountdown();
+  }
 
   // ---------- Lobby ----------
   function enterLobby() {
@@ -435,8 +451,9 @@ async function main() {
   $("btn-again").addEventListener("click", async () => {
     if (!session) return;
     if (session.kind === "sim") {
-      session = { ...session, match: newSimMatch(session.config, session.center) };
-      enterLobby();
+      const cfg = { ...session.config, speed: profile.demoSpeed };
+      session = { ...session, config: cfg, match: newSimMatch(cfg, session.center) };
+      startSim();
       return;
     }
     try {
@@ -615,6 +632,7 @@ async function main() {
     if (screen === "home") {
       const inGame = !!session && phase !== null;
       $("return-game").classList.toggle("hidden", !inGame);
+      $("home-mode").textContent = isSim() ? `Simulation ${profile.demoSpeed}×` : "";
     }
 
     if (screen === "create") {
@@ -627,14 +645,11 @@ async function main() {
       pick("zone", config.zoneFt);
       pick("max", config.max);
       pick("mins", config.mins);
-      simToggle.checked = config.sim;
-      $("sim-speed").classList.toggle("hidden", !config.sim);
-      $("speed-value").textContent = `${config.speed}×`;
       $("create-where").textContent = here ? "Arena centre · your location" : "Arena centre · Keller Hall (no GPS)";
       $("create-coords").textContent = formatLatLon(here ?? { lat: KELLER.lat, lon: KELLER.lon });
-      $("create-hint").textContent = config.sim
-        ? `Bots fill every spot and you run on autopilot at ${config.speed}×.`
-        : "Real players only — share the code so friends can join.";
+      $("create-hint").textContent = isSim()
+        ? `Simulation (${profile.demoSpeed}×): bots fill every spot and you auto-walk. Change in Settings.`
+        : "Real GPS: real players only — share the code so friends can join.";
     }
 
     if (screen === "lobby") {
@@ -712,6 +727,13 @@ async function main() {
       if (guest) saveNameBtn.disabled = true;
       $("name-hint").textContent = guest ? "Guests get a random name. Sign in with Google to change it." : "";
       $("privacy-warning").classList.toggle("hidden", profile.useLocation);
+      document.querySelectorAll<HTMLElement>("[data-mode]").forEach((el) => {
+        const on = el.dataset.mode === profile.mode;
+        el.classList.toggle("active", on);
+        el.setAttribute("aria-checked", String(on));
+      });
+      $("sim-speed").classList.toggle("hidden", !isSim());
+      $("speed-value").textContent = `${profile.demoSpeed}×`;
       const avg = profile.gamesPlayed ? profile.allTimeScoreM2 / profile.gamesPlayed : 0;
       const stats: [string, string][] = [
         ["All time score", formatArea(profile.allTimeScoreM2)],
