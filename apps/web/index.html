@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>paper.irl — Keller Hall demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <div class="brand">
+          <span class="logo">paper.irl</span>
+          <span class="place">Keller Hall · UMN · 500 m</span>
+        </div>
+        <div class="clock">
+          <span id="phase">loading</span>
+          <span id="timer" class="timer">15:00</span>
+        </div>
+      </header>
+
+      <div id="map"></div>
+
+      <aside class="hud">
+        <div class="hud-title">Live lobby</div>
+        <ol id="scores"></ol>
+        <div class="controls">
+          <button id="btn-play" type="button">Pause</button>
+          <label class="speed">
+            Speed
+            <select id="speed">
+              <option value="15">15×</option>
+              <option value="30" selected>30×</option>
+              <option value="60">60×</option>
+              <option value="120">120×</option>
+            </select>
+          </label>
+          <button id="btn-restart" type="button">Restart</button>
+        </div>
+        <p class="hint">
+          8 bots · mock GPS on real OSM paths · satellite basemap
+        </p>
+      </aside>
+
+      <footer class="attr">
+        © OpenStreetMap contributors · Esri World Imagery · demo only
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

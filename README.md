@@ -5,9 +5,11 @@ IRL [paper.io](https://paper.io)-style territory game on campus roads/paths. Fir
 ## Monorepo
 
 ```
+apps/web      Satellite map demo — 8 bots on real OSM paths (Keller Hall)
 apps/server   HTTP API + in-memory lobby (optional Postgres)
 apps/sim      8-bot mock GPS simulation (verification harness)
-packages/rules  Pure game logic + Keller fixture graph
+packages/rules  Pure game logic + Keller fixture / OSM graph loader
+data/keller   Compiled OSM playable graph (keller-osm-v1)
 docs/         MVP rules summary
 ```
 
@@ -15,10 +17,13 @@ docs/         MVP rules summary
 
 ```bash
 pnpm install
-pnpm test          # rules unit tests
-pnpm sim:lobby     # 8 mocked players on Keller fixture
+pnpm demo          # browser UI: satellite + timer + 8 bots (http://localhost:5173)
+pnpm test          # rules unit tests + headless sim
+pnpm sim:lobby     # 8 mocked players on Keller fixture (CI harness)
 pnpm dev:server    # API on :3001 (DATABASE_URL optional)
 ```
+
+No Google Maps key needed for the demo. Paths come from OpenStreetMap; the basemap is Esri World Imagery (satellite).
 
 Optional Postgres:
 
@@ -36,12 +41,13 @@ pnpm dev:server
 | Cut → wipe → neutral land → respawn | `pnpm test` | Victim area 0, must re-plant |
 | Top 3 by area at end | `pnpm test` | Sorted ranking |
 | 8-bot random walk / cut / respawn | `pnpm sim:lobby` | Exit 0 + JSON summary |
+| Watchable campus match | `pnpm demo` | Satellite map, timer, scores, live bots |
 
 ## MVP product locks
 
 - Host Start, nicknames, always-visible opponents, area score, land → neutral on death, nearest safe respawn (moves if contested).
-- Google Maps UI comes later (needs Android Maps API key). Logic does not need Google.
-- Cloud (Railway/Supabase) not required for local sim/tests.
+- Playable paths: **OpenStreetMap** (claim truth). Phone UI later may use Google or MapLibre for look; logic stays on OSM.
+- Local satellite demo needs no Google key. Cloud (Railway/Supabase) not required for local sim/tests.
 
 ## API sketch
 

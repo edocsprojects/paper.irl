@@ -4,10 +4,11 @@ Short product rules for implementers. Full plan lives in the project agent store
 
 ## Match
 
-- Map: Kenneth H. Keller Hall center, **500 m** radius (fixture graph until OSM compile).
+- Map: Kenneth H. Keller Hall center, **500 m** radius. Playable graph: **OSM roads/paths** (`data/keller/graph.json`). Unit tests still use a dense fixture grid.
 - Lobby: create → nickname → join code → host **Start**. Max **8**. **15 minutes**. No late join.
 - Everyone always sees everyone else (position / trail / color).
 - Score: **area held** (path length × ~5 m + enclosed blocks). Results: **top 3**.
+- Local watchable demo: `pnpm demo` — satellite basemap + sped-up 8-bot match.
 
 ## Loop
 
@@ -20,5 +21,6 @@ Short product rules for implementers. Full plan lives in the project agent store
 ## Local stack
 
 - Node server + rules package + Docker Postgres (optional for sim).
-- `pnpm sim:lobby` — 8 mocked bots with synthetic GPS.
+- `pnpm demo` — MapLibre satellite UI + OSM paths + 8 bots.
+- `pnpm sim:lobby` — 8 mocked bots with synthetic GPS (fixture graph).
 - `pnpm test` — unit rules tests.

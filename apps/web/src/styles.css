@@ -1,0 +1,200 @@
+:root {
+  --ink: #f4efe6;
+  --muted: #b9b0a2;
+  --panel: rgba(12, 16, 14, 0.78);
+  --line: rgba(244, 239, 230, 0.14);
+  --accent: #7dffa8;
+  --danger: #ff6b4a;
+  --font-display: "Bebas Neue", Impact, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #0b0f0d;
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+}
+
+.top {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 1.1rem 1.25rem;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(8, 12, 10, 0.72) 0%,
+    rgba(8, 12, 10, 0) 100%
+  );
+}
+
+.brand .logo {
+  display: block;
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 5vw, 3.4rem);
+  letter-spacing: 0.04em;
+  line-height: 0.9;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+}
+
+.brand .place {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+}
+
+.clock {
+  text-align: right;
+  pointer-events: none;
+}
+
+.clock #phase {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: var(--accent);
+}
+
+.timer {
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 4.5vw, 3rem);
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+
+.hud {
+  position: absolute;
+  z-index: 2;
+  right: 1rem;
+  bottom: 2.4rem;
+  width: min(280px, calc(100vw - 2rem));
+  padding: 0.95rem 1rem 1rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+}
+
+.hud-title {
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  font-size: 1.35rem;
+  margin-bottom: 0.55rem;
+}
+
+#scores {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  max-height: 42vh;
+  overflow: auto;
+}
+
+#scores li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  gap: 0.55rem;
+  align-items: center;
+  font-size: 0.86rem;
+}
+
+#scores .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+#scores .mode {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+button,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+}
+
+button:hover,
+select:hover {
+  border-color: rgba(125, 255, 168, 0.45);
+}
+
+.speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.hint {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.attr {
+  position: absolute;
+  z-index: 2;
+  left: 0.75rem;
+  bottom: 0.45rem;
+  font-size: 0.65rem;
+  color: rgba(244, 239, 230, 0.55);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.maplibregl-ctrl-attrib {
+  background: rgba(0, 0, 0, 0.45) !important;
+  color: #ddd !important;
+}
+
+@media (max-width: 720px) {
+  .hud {
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    bottom: 1.8rem;
+  }
+
+  #scores {
+    max-height: 28vh;
+  }
+}
