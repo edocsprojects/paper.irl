@@ -7,7 +7,7 @@
     "build": "pnpm -r run build",
     "test": "pnpm --filter @paper-irl/rules test && pnpm sim:lobby && pnpm verify:mobile",
     "sim:lobby": "pnpm --filter @paper-irl/rules build && pnpm --filter @paper-irl/sim start",
-    "verify:mobile": "pnpm --filter @paper-irl/mobile verify:bundle",
+    "verify:mobile": "pnpm --filter @paper-irl/rules build && pnpm --filter @paper-irl/mobile verify:bundle",
     "demo": "pnpm --filter @paper-irl/web dev",
     "dev:server": "pnpm --filter @paper-irl/server dev",
     "mobile": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=human pnpm --filter @paper-irl/mobile android",

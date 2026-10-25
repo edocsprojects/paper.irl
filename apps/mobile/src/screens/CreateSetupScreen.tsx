@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -11,6 +11,8 @@ import { BrandMark } from "../components/BrandMark";
 import { LinearishBg } from "../components/LinearishBg";
 import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
 import { formatLatLon } from "../arena/geoProject";
+import { currentFix } from "../lib/location";
+import { feetToMeters } from "../lib/units";
 import { colors, fonts } from "../theme/tokens";
 import type { Session } from "../state/appMachine";
 
@@ -41,17 +43,34 @@ export function CreateSetupScreen({
   onFail,
   onBack,
 }: Props) {
-  const [nickname, setNickname] = useState("You");
-  const [radiusM, setRadiusM] = useState("500");
+  const [nickname, setNickname] = useState("");
+  const [radiusFt, setRadiusFt] = useState("1600");
   const [maxPlayers, setMaxPlayers] = useState("8");
-  const lat = TEST_LOCATION.lat;
-  const lon = TEST_LOCATION.lon;
+  // The arena is centred on the host's real position (falls back to the
+  // Keller test point only if location is unavailable).
+  const [here, setHere] = useState<{ lat: number; lon: number } | null>(null);
+  const [locating, setLocating] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    currentFix()
+      .then((f) => {
+        if (alive && f) setHere({ lat: f.lat, lon: f.lon });
+      })
+      .finally(() => alive && setLocating(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const lat = here?.lat ?? TEST_LOCATION.lat;
+  const lon = here?.lon ?? TEST_LOCATION.lon;
 
   async function create() {
     onBusy(true);
     try {
       const maxSeats = parseIntClamped(maxPlayers, 8, 2, 8);
-      const radius = parseIntClamped(radiusM, 500, 50, 5000);
+      const radius = Math.round(
+        feetToMeters(parseIntClamped(radiusFt, 1600, 160, 16000)),
+      );
       const created = await api.createLobby({
         maxSeats,
         radiusM: radius,
@@ -61,7 +80,8 @@ export function CreateSetupScreen({
       if (created.phase !== "open") {
         throw new Error("lobby_not_open");
       }
-      const joined = await api.join(created.code, nickname.trim() || "You");
+      // Blank nickname → the server names you "Player N".
+      const joined = await api.join(created.code, nickname.trim());
       await api.fillBots(created.code, 1);
       const lobby = await api.get(created.code);
       if (lobby.phase !== "open") {
@@ -94,7 +114,9 @@ export function CreateSetupScreen({
         </Pressable>
       </View>
 
-      <Text style={styles.kicker}>Current location</Text>
+      <Text style={styles.kicker}>
+        {here ? "Arena centre · your location" : locating ? "Finding you…" : "Location unavailable · test point"}
+      </Text>
       <Text style={styles.coords}>{formatLatLon(lat, lon)}</Text>
 
       <Text style={styles.label}>Nickname</Text>
@@ -103,16 +125,17 @@ export function CreateSetupScreen({
         value={nickname}
         onChangeText={setNickname}
         autoCapitalize="none"
+        placeholder="Blank = Player N"
         placeholderTextColor={colors.muted}
       />
 
       <View style={styles.row}>
         <View style={styles.half}>
-          <Text style={styles.label}>Radius (m)</Text>
+          <Text style={styles.label}>Radius (ft)</Text>
           <TextInput
             style={styles.input}
-            value={radiusM}
-            onChangeText={setRadiusM}
+            value={radiusFt}
+            onChangeText={setRadiusFt}
             keyboardType="number-pad"
             placeholderTextColor={colors.muted}
           />
@@ -130,8 +153,8 @@ export function CreateSetupScreen({
       </View>
 
       <Pressable
-        style={[styles.btn, busy && styles.btnDisabled]}
-        disabled={busy}
+        style={[styles.btn, (busy || locating) && styles.btnDisabled]}
+        disabled={busy || locating}
         onPress={create}
       >
         {busy ? (
@@ -172,7 +195,7 @@ const styles = StyleSheet.create({
     color: colors.inkSoft,
   },
   input: {
-    backgroundColor: "rgba(255,255,255,0.92)",
+    backgroundColor: colors.field,
     borderRadius: 4,
     borderWidth: 1,
     borderColor: colors.line,

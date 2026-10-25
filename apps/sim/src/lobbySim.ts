@@ -73,7 +73,7 @@ function botStep(
     } else if (seat.mode === "trailing" && seat.owned[0]) {
       // Bias home to bank loops
       if (rand() < 0.35) {
-        const home = seat.owned[0]![0]!;
+        const home = seat.owned[0]![0]![0]!;
         const local = toLocalM(pos.lat, pos.lon, home.lat, home.lon);
         heading = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.8;
       } else {
@@ -179,14 +179,16 @@ function main() {
       const beforeTrail = seat.trail.length;
       const beforeOwned = seat.owned.length;
       botStep(lobby, seat, rand, simNow);
-      if (beforeMode === "toPlant" && seat.mode === "safe") plants++;
+      if (beforeMode !== "safe" && beforeMode !== "trailing" && seat.mode === "safe") {
+        plants++;
+      }
       if (seat.mode === "safe" && beforeTrail > 0 && seat.trail.length === 0) {
         banks++;
       }
       if (
         beforeOwned > 0 &&
         seat.owned.length === 0 &&
-        seat.mode === "toPlant"
+        seat.mode === "ghost"
       ) {
         cuts++;
       }
@@ -219,7 +221,7 @@ function main() {
         if (
           beforeOwned > 0 &&
           prey.owned.length === 0 &&
-          prey.mode === "toPlant"
+          prey.mode === "ghost"
         ) {
           cuts++;
         }

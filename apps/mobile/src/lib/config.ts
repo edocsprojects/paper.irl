@@ -14,6 +14,21 @@ export function launchMode(): LaunchMode {
 }
 
 /**
+ * How the local player moves:
+ * - "gps": real phone location (default — this is the game).
+ * - "auto": server autopilot walks you (dev / Simulator without a route).
+ * Override with EXPO_PUBLIC_MOVE=auto; the HUD can also toggle it live.
+ */
+export type MoveMode = "gps" | "auto";
+
+export function defaultMoveMode(): MoveMode {
+  const v = process.env.EXPO_PUBLIC_MOVE;
+  if (v === "auto" || v === "gps") return v;
+  // The bot demo walks player 1 too (a Simulator's GPS never moves).
+  return launchMode() === "host-bots" ? "auto" : "gps";
+}
+
+/**
  * Default API host for simulators:
  * - Android emulator → host machine via 10.0.2.2
  * - iOS Simulator → host loopback via 127.0.0.1

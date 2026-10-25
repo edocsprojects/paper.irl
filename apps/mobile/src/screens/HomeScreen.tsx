@@ -14,7 +14,7 @@ export function HomeScreen({ onCreate, onJoin }: Props) {
     <View style={styles.root}>
       <LinearishBg />
       <BrandMark size={48} />
-      <Text style={styles.copy}>Claim territory. Walk the circle.</Text>
+      <Text style={styles.copy}>Leave your zone. Loop back. Own the block.</Text>
 
       <Pressable style={styles.btn} onPress={onCreate}>
         <Text style={styles.btnText}>Create</Text>
@@ -48,7 +48,9 @@ const styles = StyleSheet.create({
   btnText: { color: "#fff", fontFamily: fonts.ui, fontSize: 18 },
   btnSecondary: {
     marginTop: 12,
-    backgroundColor: colors.ink,
+    backgroundColor: colors.field,
+    borderWidth: 1,
+    borderColor: colors.line,
     borderRadius: 4,
     paddingVertical: 16,
     alignItems: "center",

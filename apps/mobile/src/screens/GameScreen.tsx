@@ -2,14 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState as RNAppState, StyleSheet, Text, View } from "react-native";
 import {
   api,
-  TEST_LOCATION,
   type LobbyPayload,
   type LobbyWithEffects,
 } from "../lib/api";
+import { defaultMoveMode, type MoveMode } from "../lib/config";
+import { useGps, type GpsFix } from "../lib/location";
 import { snacksFromEffects } from "../lib/effectSnacks";
 import { GameMap, mapFingerprint } from "../map/GameMap";
 import { SnackbarHost } from "../components/SnackbarHost";
 import { PlayHud } from "../components/PlayHud";
+import { KillFeed } from "../components/KillFeed";
+import { useGameNotices } from "../lib/useGameNotices";
+import type { ZoomMode } from "../map/paintPayload";
 import { colors, fonts } from "../theme/tokens";
 import {
   spawnOverlayVisible,
@@ -17,7 +21,7 @@ import {
   type AppEvent,
   type Session,
 } from "../state/appMachine";
-import { SpawnOverlay } from "./SpawnOverlay";
+import { SpawnHint, SpawnOverlay } from "./SpawnOverlay";
 import { ResultsOverlay } from "./ResultsOverlay";
 import { RematchWaiting } from "./RematchWaiting";
 import { LobbyCardScreen } from "./LobbyCardScreen";
@@ -31,8 +35,10 @@ type Props = {
 };
 
 /**
- * Live play — auto-move only for the local seat (never auto-plant/respawn).
- * Ethan taps Create / Start / respawn. Bots auto-move + auto-respawn on server.
+ * Live play. The local seat moves with the phone's real GPS (default) or,
+ * for Simulator/dev, the server autopilot. Spawning: the player taps once to
+ * arm; their starter is planted where they stand (or at the nearest clear
+ * marker, planted on arrival). Bots auto-move + auto-respawn on the server.
  */
 export function GameScreen({
   state,
@@ -45,6 +51,12 @@ export function GameScreen({
   const lastFp = useRef("");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [startBusy, setStartBusy] = useState(false);
+  // Fixed per build: phones use GPS; the bot demo walks you automatically.
+  const [moveMode] = useState<MoveMode>(defaultMoveMode);
+  const [zoomMode, setZoomMode] = useState<ZoomMode>("arena");
+  // Respawns are automatic (walk into the ring); only the first spawn is a tap.
+  const armedRef = useRef(state.spawnArmed || state.plantedOnce);
+  armedRef.current = state.spawnArmed || state.plantedOnce;
 
   const you = useMemo(
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
@@ -52,6 +64,14 @@ export function GameScreen({
   );
 
   const remainingMs = Math.max(0, (lobby?.endsAtMs ?? nowMs) - nowMs);
+  useGameNotices(lobby, session.seatId, remainingMs, (text, tone) =>
+    dispatch({ type: "SNACK", text, tone }),
+  );
+  // Server-clock offset so the kill feed fades on the server's timeline.
+  const skewMs = useMemo(
+    () => (lobby?.serverNowMs ? lobby.serverNowMs - Date.now() : 0),
+    [lobby],
+  );
 
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 1000);
@@ -97,7 +117,8 @@ export function GameScreen({
       }
     }
     refresh();
-    const id = setInterval(refresh, 400);
+    // ~4 Hz: the map glides between updates, so this reads as smooth motion.
+    const id = setInterval(refresh, 250);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -132,20 +153,56 @@ export function GameScreen({
     return () => clearTimeout(t);
   }, [state.screen, state.countdown, dispatch]);
 
-  // Auto-move only — never autoPlant. Human taps SpawnOverlay to plant/respawn.
+  // ── Real GPS → server (one request in flight; newest fix wins) ──
+  const inflight = useRef(false);
+  const queued = useRef<GpsFix | null>(null);
+  const sendFix = useCallback(
+    async (fix: GpsFix) => {
+      if (inflight.current) {
+        queued.current = fix;
+        return;
+      }
+      inflight.current = true;
+      try {
+        let next: GpsFix | null = fix;
+        while (next) {
+          queued.current = null;
+          const res = await api.fix(session.code, session.seatId, {
+            lat: next.lat,
+            lon: next.lon,
+            accuracyM: next.accuracyM,
+            speedMps: next.speedMps,
+            clientTsMs: next.tsMs,
+            plant: armedRef.current,
+          });
+          applyEffects(res);
+          next = queued.current;
+        }
+      } catch {
+        /* next fix retries */
+      } finally {
+        inflight.current = false;
+      }
+    },
+    [session.code, session.seatId, applyEffects],
+  );
+  const gpsOn = moveMode === "gps" && !!lobby && lobby.phase !== "ended";
+  const gps = useGps(gpsOn, sendFix);
+
+  // ── Dev autopilot (no GPS): server walks the seat; plants only once armed ──
   useEffect(() => {
+    if (moveMode !== "auto") return;
     if (!lobby || lobby.phase !== "live") return;
     if (state.countdown != null) return;
     const id = setInterval(() => {
       api
-        .autopilot(session.code, session.seatId, { autoPlant: false })
-        .then((next) => {
-          applyEffects(next);
-        })
+        .autopilot(session.code, session.seatId, { autoPlant: armedRef.current })
+        .then(applyEffects)
         .catch(() => undefined);
     }, 200);
     return () => clearInterval(id);
   }, [
+    moveMode,
     lobby?.phase,
     session.code,
     session.seatId,
@@ -153,32 +210,21 @@ export function GameScreen({
     state.countdown,
   ]);
 
-  async function spawn() {
-    const at = you?.respawnAt ?? {
-      lat: TEST_LOCATION.lat,
-      lon: TEST_LOCATION.lon,
-    };
-    try {
-      const next = await api.fix(session.code, session.seatId, {
-        lat: at.lat,
-        lon: at.lon,
-        accuracyM: 5,
-        speedMps: 0,
-        clientTsMs: Date.now(),
-        mock: true,
-        plant: true,
-      });
-      applyEffects(next);
-      dispatch({ type: "SPAWN_CONFIRMED" });
-      dispatch({
-        type: "SNACK",
-        text: "You're planted",
-        tone: "good",
-      });
-    } catch (e) {
-      dispatch({ type: "FAIL", error: String(e) });
-    }
+  function spawn() {
+    armedRef.current = true;
+    dispatch({ type: "SPAWN_ARMED" });
+    // Plant right away from the latest real fix instead of waiting ~1 s.
+    if (moveMode === "gps" && gps.fix) sendFix({ ...gps.fix, tsMs: Date.now() });
   }
+
+  // host-bots demo: tap Spawn automatically.
+  const showSpawnNow = spawnOverlayVisible(state.screen, state.spawnArmed);
+  useEffect(() => {
+    if (session.mode !== "host-bots" || !showSpawnNow) return;
+    const id = setTimeout(spawn, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.mode, showSpawnNow]);
 
   async function playAgain() {
     try {
@@ -223,21 +269,40 @@ export function GameScreen({
     );
   }
 
-  const showSpawn = spawnOverlayVisible(state.screen, false);
+  const showSpawn = spawnOverlayVisible(state.screen, state.spawnArmed);
+  const awaitingSpawn =
+    (state.spawnArmed && state.screen === "match_starting") ||
+    state.screen === "death_respawn";
   const showResults = state.screen === "results";
   const showRematch = state.screen === "rematch_waiting";
 
   return (
     <View style={styles.root}>
-      <GameMap lobby={lobby} youId={session.seatId} />
+      <GameMap lobby={lobby} youId={session.seatId} zoomMode={zoomMode} />
 
       <PlayHud
-        code={lobby.code}
         remainingMs={remainingMs}
         top3={lobby.top3}
+        youId={session.seatId}
         paused={!state.appActive}
+        arenaAreaM2={Math.PI * lobby.arena.radiusM ** 2}
+        zoomMode={zoomMode}
+        onToggleZoom={() => setZoomMode((z) => (z === "arena" ? "close" : "arena"))}
         onExit={() => dispatch({ type: "EXIT_HOME" })}
       />
+
+      <KillFeed
+        feed={lobby.feed ?? []}
+        seats={lobby.seats}
+        youId={session.seatId}
+        nowMs={nowMs + skewMs}
+      />
+
+      {awaitingSpawn ? (
+        <SpawnHint
+          text={state.screen === "death_respawn" ? "Respawn — head to your ring" : "Spawning…"}
+        />
+      ) : null}
 
       <SnackbarHost
         snack={state.snack}

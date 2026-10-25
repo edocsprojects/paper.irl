@@ -2,38 +2,80 @@ import {
   clampToArena,
   fromLocalM,
   haversineM,
-  pointInRing,
   toLocalM,
 } from "./geo.js";
 import { applyFix } from "./lobby.js";
+import { nearestBoundaryPoint, pointInTerritory } from "./territory.js";
 import type { Effect, LatLon, LobbyState, Seat, SeatId } from "./types.js";
-
-const headings = new Map<SeatId, number>();
 
 /**
  * Local-patch raid with crossing bias: leave starter, wander a nearby patch,
  * steer through other players' open trails / zone edges so cuts happen on
- * screen, then often bank home. Not a private orbit; not an arena sprint.
+ * screen, then bank home without crossing our own trail.
  */
 type RaidPlan = {
   goal: LatLon;
   home: LatLon;
   minTrail: number;
   leashM: number;
+  /** Committed hunt (a coin flip per tick between two targets = jitter in place). */
+  huntId: SeatId | null;
+  huntUntilMs: number;
+  /** Progress watchdog: re-plan if we have not really moved for a while. */
+  checkAt: LatLon;
+  checkMs: number;
 };
-const raids = new Map<SeatId, RaidPlan>();
 
-/** Human walk/jog @ ~5 Hz: 0.4–0.85 m/tick ≈ 2–4.3 m/s. */
-const STEP_MIN_M = 0.4;
-const STEP_SPAN_M = 0.45;
+const HUNT_COMMIT_MS = 5000;
+const STUCK_WINDOW_MS = 6000;
+const STUCK_MIN_M = 4;
 
-function ringCentroid(ring: LatLon[]): LatLon {
+/** Bot memory is per lobby — seat ids restart at 1 in every lobby. */
+const headings = new Map<string, number>();
+const raids = new Map<string, RaidPlan>();
+const keyOf = (state: LobbyState, id: SeatId) => `${state.code}#${id}`;
+
+/** Real jog pace; lobby.speedScale multiplies it for demos. */
+const BASE_SPEED_MPS = 3;
+/** Max turn rate — bots curve like a person instead of zig-zagging. */
+const MAX_TURN_RAD_PER_S = 2.4;
+const lastStepMs = new Map<string, number>();
+
+function stepSeconds(state: LobbyState, seat: Seat, nowMs: number): number {
+  const key = keyOf(state, seat.id);
+  const last = lastStepMs.get(key);
+  lastStepMs.set(key, nowMs);
+  if (last === undefined) return 0.2;
+  return Math.max(0.05, Math.min(0.5, (nowMs - last) / 1000));
+}
+
+/** Each bot keeps its own steady pace (±15%) so they don't move in lockstep. */
+function paceMps(state: LobbyState, seat: Seat): number {
+  const personal = 0.85 + ((seat.id * 7919) % 31) / 100;
+  return BASE_SPEED_MPS * personal * state.speedScale;
+}
+
+function angleDiff(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+/** Vertex-average of a polygon's outer ring (good enough for a "home" aim). */
+export function territoryCenter(seat: Seat): LatLon | null {
+  let best: LatLon[] | null = null;
+  for (const poly of seat.owned) {
+    const outer = poly[0];
+    if (outer && (!best || outer.length > best.length)) best = outer;
+  }
+  if (!best || best.length < 2) return null;
   let lat = 0;
   let lon = 0;
-  const n = Math.max(1, ring.length - (ring.length > 1 ? 1 : 0));
+  const n = best.length - 1;
   for (let i = 0; i < n; i++) {
-    lat += ring[i]!.lat;
-    lon += ring[i]!.lon;
+    lat += best[i]!.lat;
+    lon += best[i]!.lon;
   }
   return { lat: lat / n, lon: lon / n };
 }
@@ -58,16 +100,12 @@ function crossingAttractors(
       const d = haversineM(home.lat, home.lon, other.position.lat, other.position.lon);
       if (d < leashM && d > 8) out.push(other.position);
     }
-    if (other.owned[0]) {
-      const oh = ringCentroid(other.owned[0]);
-      if (haversineM(home.lat, home.lon, oh.lat, oh.lon) < leashM) {
-        // Aim just outside their border toward us — cross into contested space.
-        const loc = toLocalM(oh.lat, oh.lon, home.lat, home.lon);
-        const len = Math.hypot(loc.x, loc.y) || 1;
-        out.push(
-          fromLocalM(oh.lat, oh.lon, (loc.x / len) * 28, (loc.y / len) * 28),
-        );
-      }
+    const oh = territoryCenter(other);
+    if (oh && haversineM(home.lat, home.lon, oh.lat, oh.lon) < leashM) {
+      // Aim just outside their border toward us — cross into contested space.
+      const loc = toLocalM(oh.lat, oh.lon, home.lat, home.lon);
+      const len = Math.hypot(loc.x, loc.y) || 1;
+      out.push(fromLocalM(oh.lat, oh.lon, (loc.x / len) * 28, (loc.y / len) * 28));
     }
   }
   return out;
@@ -97,22 +135,19 @@ function pickLocalGoal(
   leashM: number,
 ): LatLon {
   const arena = state.arena;
-  const owned = seat.owned[0] ?? null;
   const attractors = crossingAttractors(state, seat, home, leashM);
 
   // Prefer aiming at another player's trail / zone so paths overlap.
   if (attractors.length && rand() < 0.72) {
     const target = attractors[Math.floor(rand() * attractors.length)]!;
-    let goal = { ...target };
-    // Nudge slightly so we actually cross the line rather than sit on a tip.
-    goal = fromLocalM(
-      goal.lat,
-      goal.lon,
+    let goal = fromLocalM(
+      target.lat,
+      target.lon,
       (rand() - 0.5) * 10,
       (rand() - 0.5) * 10,
     );
     goal = leashClamp(arena, home, goal, leashM);
-    if (!owned || !pointInRing(goal, owned)) return goal;
+    if (!pointInTerritory(goal, seat.owned)) return goal;
   }
 
   // Fallback: nearby random patch outside owned land.
@@ -120,7 +155,7 @@ function pickLocalGoal(
   const ang = rand() * Math.PI * 2;
   let goal = fromLocalM(home.lat, home.lon, Math.cos(ang) * dist, Math.sin(ang) * dist);
   goal = leashClamp(arena, home, goal, leashM);
-  if (owned && pointInRing(goal, owned)) {
+  if (pointInTerritory(goal, seat.owned)) {
     goal = fromLocalM(home.lat, home.lon, Math.cos(ang) * (dist + 16), Math.sin(ang) * (dist + 16));
     goal = leashClamp(arena, home, goal, leashM);
   }
@@ -128,65 +163,151 @@ function pickLocalGoal(
 }
 
 function stepToward(
-  arena: LobbyState["arena"],
+  state: LobbyState,
+  seat: Seat,
   pos: LatLon,
   goal: LatLon,
   rand: () => number,
-  seatId: SeatId,
+  nowMs: number,
 ): LatLon {
+  const arena = state.arena;
+  const key = keyOf(state, seat.id);
+  const dt = stepSeconds(state, seat, nowMs);
   const local = toLocalM(pos.lat, pos.lon, goal.lat, goal.lon);
   const dist = Math.hypot(local.x, local.y);
-  const heading = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.28;
-  const stepM = Math.min(STEP_MIN_M + rand() * STEP_SPAN_M, Math.max(dist, STEP_MIN_M));
-  headings.set(seatId, heading);
-  return clampToArena(
+  const desired = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.06;
+  const current = headings.get(key) ?? desired;
+  const maxTurn = MAX_TURN_RAD_PER_S * dt;
+  const base = current + Math.max(-maxTurn, Math.min(maxTurn, angleDiff(desired, current)));
+  const stepM = Math.min(paceMps(state, seat) * dt, Math.max(dist, 0.05));
+  const heading = base;
+  const next = clampToArena(
     arena,
     fromLocalM(pos.lat, pos.lon, Math.cos(heading) * stepM, Math.sin(heading) * stepM),
   );
+  headings.set(key, heading);
+  return next;
 }
 
-function ensureRaid(state: LobbyState, seat: Seat, pos: LatLon, rand: () => number): RaidPlan {
-  const home = seat.owned[0] ? ringCentroid(seat.owned[0]) : pos;
-  let plan = raids.get(seat.id);
+/** A point a few metres inside our land on the side nearest `pos`. */
+function homeEntry(state: LobbyState, seat: Seat, pos: LatLon): LatLon | null {
+  const o = { lat: state.arena.centerLat, lon: state.arena.centerLon };
+  const edge = nearestBoundaryPoint(o, seat.owned, pos);
+  const c = territoryCenter(seat);
+  if (!edge) return c;
+  if (!c) return edge;
+  const v = toLocalM(edge.lat, edge.lon, c.lat, c.lon);
+  const len = Math.hypot(v.x, v.y) || 1;
+  const inset = Math.min(6, len);
+  return fromLocalM(edge.lat, edge.lon, (v.x / len) * inset, (v.y / len) * inset);
+}
+
+function ensureRaid(
+  state: LobbyState,
+  seat: Seat,
+  pos: LatLon,
+  rand: () => number,
+  nowMs: number,
+): RaidPlan {
+  const home = territoryCenter(seat) ?? pos;
+  const key = keyOf(state, seat.id);
+  let plan = raids.get(key);
   if (!plan || haversineM(plan.home.lat, plan.home.lon, home.lat, home.lon) > 35) {
+    // Roam far enough to reach the nearest neighbour — evenly spread players
+    // must still meet, or the match is all banking and no cutting.
+    let nearest = Infinity;
+    for (const o of state.seats.values()) {
+      if (o.id === seat.id) continue;
+      const p = territoryCenter(o) ?? o.position;
+      if (p) nearest = Math.min(nearest, haversineM(home.lat, home.lon, p.lat, p.lon));
+    }
+    const leashM = Math.min(
+      state.arena.radiusM,
+      Math.max(110, Number.isFinite(nearest) ? nearest * 0.85 : 110),
+    );
     plan = {
       home,
-      goal: pickLocalGoal(state, seat, home, rand, 110),
+      goal: pickLocalGoal(state, seat, home, rand, leashM),
       minTrail: 12 + Math.floor(rand() * 14),
-      // Slightly wider leash so spread starters still cross trails.
-      leashM: 110,
+      leashM,
+      huntId: null,
+      huntUntilMs: 0,
+      checkAt: { ...pos },
+      checkMs: nowMs,
     };
-    raids.set(seat.id, plan);
+    raids.set(key, plan);
+  }
+  if (nowMs - plan.checkMs >= STUCK_WINDOW_MS) {
+    if (haversineM(plan.checkAt.lat, plan.checkAt.lon, pos.lat, pos.lon) < STUCK_MIN_M) {
+      plan.goal = pickLocalGoal(state, seat, home, rand, plan.leashM);
+      plan.huntId = null;
+    }
+    plan.checkAt = { ...pos };
+    plan.checkMs = nowMs;
   }
   return plan;
 }
 
-/** Live steer onto a nearby open trail for an on-screen cut attempt. */
+/**
+ * Steer onto a nearby open trail for an on-screen cut attempt. Once a prey
+ * is picked the bot commits to it for HUNT_COMMIT_MS instead of re-rolling
+ * every tick.
+ */
 function huntCrossing(
   state: LobbyState,
   seat: Seat,
-  home: LatLon,
-  leashM: number,
+  plan: RaidPlan,
   rand: () => number,
+  nowMs: number,
+  startChance: number,
 ): LatLon | null {
+  if (plan.huntId !== null && nowMs < plan.huntUntilMs) {
+    const prey = state.seats.get(plan.huntId);
+    if (prey && prey.mode === "trailing" && prey.trail.length >= 2) {
+      return prey.trail[Math.floor(prey.trail.length / 2)]!;
+    }
+  }
+  plan.huntId = null;
+  if (rand() >= startChance) return null;
   const prey = [...state.seats.values()]
-    .filter(
-      (s) =>
-        s.id !== seat.id &&
-        s.mode === "trailing" &&
-        s.trail.length >= 3,
-    )
+    .filter((s) => s.id !== seat.id && s.mode === "trailing" && s.trail.length >= 3)
     .map((s) => {
       const tip = s.trail[s.trail.length - 1]!;
-      const mid = s.trail[Math.floor(s.trail.length / 2)]!;
-      return { tip, mid, d: haversineM(home.lat, home.lon, tip.lat, tip.lon) };
+      return { s, d: haversineM(plan.home.lat, plan.home.lon, tip.lat, tip.lon) };
     })
-    .filter((p) => p.d < leashM)
-    .sort((a, b) => a.d - b.d);
-  if (!prey.length) return null;
-  const p = prey[0]!;
-  // Aim at mid first (cross the body of the trail), else tip.
-  return rand() < 0.55 ? p.mid : p.tip;
+    .filter((p) => p.d < plan.leashM)
+    .sort((a, b) => a.d - b.d)[0];
+  if (!prey) return null;
+  plan.huntId = prey.s.id;
+  plan.huntUntilMs = nowMs + HUNT_COMMIT_MS;
+  return prey.s.trail[Math.floor(prey.s.trail.length / 2)]!;
+}
+
+function randomStep(
+  state: LobbyState,
+  seat: Seat,
+  pos: LatLon,
+  rand: () => number,
+  nowMs: number,
+): LatLon {
+  const key = keyOf(state, seat.id);
+  const dt = stepSeconds(state, seat, nowMs);
+  let heading = headings.get(key) ?? rand() * Math.PI * 2;
+  heading += (rand() - 0.5) * 1.2 * dt;
+  const d = haversineM(pos.lat, pos.lon, state.arena.centerLat, state.arena.centerLon);
+  if (d > state.arena.radiusM * 0.85) {
+    // Curve back toward the middle near the boundary.
+    const toC = toLocalM(pos.lat, pos.lon, state.arena.centerLat, state.arena.centerLon);
+    const want = Math.atan2(toC.y, toC.x);
+    heading += Math.max(-MAX_TURN_RAD_PER_S * dt, Math.min(MAX_TURN_RAD_PER_S * dt, angleDiff(want, heading)));
+  }
+  const stepM = paceMps(state, seat) * dt * 0.6;
+  const next = clampToArena(
+    state.arena,
+    fromLocalM(pos.lat, pos.lon, Math.cos(heading) * stepM, Math.sin(heading) * stepM),
+  );
+  headings.set(key, heading);
+  return next;
 }
 
 function wanderStep(
@@ -194,6 +315,7 @@ function wanderStep(
   seat: Seat,
   rand: () => number,
   autoPlant: boolean,
+  nowMs: number,
 ): LatLon {
   const arena = state.arena;
   const pos =
@@ -201,69 +323,29 @@ function wanderStep(
     seat.respawnAt ??
     ({ lat: arena.centerLat, lon: arena.centerLon } as LatLon);
 
-  if (
-    autoPlant &&
-    (seat.mode === "toPlant" || seat.mode === "joining" || seat.mode === "ghost") &&
-    seat.respawnAt
-  ) {
-    raids.delete(seat.id);
+  if (seat.mode === "toPlant" || seat.mode === "joining" || seat.mode === "ghost") {
+    raids.delete(keyOf(state, seat.id));
     const marker = seat.respawnAt;
-    const local = toLocalM(pos.lat, pos.lon, marker.lat, marker.lon);
-    if (Math.hypot(local.x, local.y) < 1.5) return { ...marker };
-    return stepToward(arena, pos, marker, rand, seat.id);
+    // Head for the respawn ring (even while still a ghost); plant on entry.
+    if (autoPlant && marker) {
+      const local = toLocalM(pos.lat, pos.lon, marker.lat, marker.lon);
+      if (Math.hypot(local.x, local.y) < 1.5) return { ...marker };
+      return stepToward(state, seat, pos, marker, rand, nowMs);
+    }
+    // Not armed (or still a ghost): mill about — the marker follows us.
+    return randomStep(state, seat, pos, rand, nowMs);
   }
 
-  if (
-    !autoPlant &&
-    (seat.mode === "toPlant" || seat.mode === "joining") &&
-    seat.respawnAt
-  ) {
-    raids.delete(seat.id);
-    const marker = seat.respawnAt;
-    const local = toLocalM(pos.lat, pos.lon, marker.lat, marker.lon);
-    const dist = Math.hypot(local.x, local.y);
-    const standoff = Math.max(state.plantRadiusM + 8, 28);
-    let heading = headings.get(seat.id) ?? rand() * Math.PI * 2;
-    if (dist > standoff) {
-      heading = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.35;
-    } else {
-      heading = Math.atan2(local.y, local.x) + Math.PI + (rand() - 0.5) * 1.2;
-    }
-    headings.set(seat.id, heading);
-    const stepM = STEP_MIN_M + rand() * STEP_SPAN_M;
-    let next = fromLocalM(
-      pos.lat,
-      pos.lon,
-      Math.cos(heading) * stepM,
-      Math.sin(heading) * stepM,
-    );
-    next = clampToArena(arena, next);
-    const after = toLocalM(next.lat, next.lon, marker.lat, marker.lon);
-    if (Math.hypot(after.x, after.y) <= state.plantRadiusM + 2) {
-      const ang = Math.atan2(after.y, after.x) || rand() * Math.PI * 2;
-      next = fromLocalM(
-        marker.lat,
-        marker.lon,
-        Math.cos(ang) * standoff,
-        Math.sin(ang) * standoff,
-      );
-      next = clampToArena(arena, next);
-    }
-    return next;
+  if (seat.mode === "safe" && seat.owned.length) {
+    const plan = ensureRaid(state, seat, pos, rand, nowMs);
+    // Sometimes exit toward someone's open trail (committed for a few s).
+    const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.04);
+    if (hunt) return stepToward(state, seat, pos, hunt, rand, nowMs);
+    return stepToward(state, seat, pos, plan.goal, rand, nowMs);
   }
 
-  if (seat.mode === "safe" && seat.owned[0]) {
-    const plan = ensureRaid(state, seat, pos, rand);
-    // Often exit toward a crossing attractor (other trail / neighbor).
-    if (rand() < 0.55) {
-      const hunt = huntCrossing(state, seat, plan.home, plan.leashM, rand);
-      if (hunt) return stepToward(arena, pos, hunt, rand, seat.id);
-    }
-    return stepToward(arena, pos, plan.goal, rand, seat.id);
-  }
-
-  if (seat.mode === "trailing" && seat.owned[0]) {
-    const plan = ensureRaid(state, seat, pos, rand);
+  if (seat.mode === "trailing" && seat.owned.length) {
+    const plan = ensureRaid(state, seat, pos, rand, nowMs);
     const home = plan.home;
     const toGoal = toLocalM(pos.lat, pos.lon, plan.goal.lat, plan.goal.lon);
     const goalDist = Math.hypot(toGoal.x, toGoal.y);
@@ -271,38 +353,26 @@ function wanderStep(
       seat.trail.length >= plan.minTrail ||
       (seat.trail.length >= 10 && goalDist < 5);
 
-    // While out, keep crossing other open trails before heading home.
-    if (!readyToBank && rand() < 0.5) {
-      const hunt = huntCrossing(state, seat, home, plan.leashM, rand);
-      if (hunt) return stepToward(arena, pos, hunt, rand, seat.id);
+    // While out, sometimes go after another open trail before heading home.
+    if (!readyToBank) {
+      const hunt = huntCrossing(state, seat, plan, rand, nowMs, 0.03);
+      if (hunt) return stepToward(state, seat, pos, hunt, rand, nowMs);
     }
 
     if (readyToBank) {
-      return stepToward(arena, pos, home, rand, seat.id);
+      return stepToward(state, seat, pos, homeEntry(state, seat, pos) ?? home, rand, nowMs);
     }
     if (goalDist < 4) {
       plan.goal = pickLocalGoal(state, seat, home, rand, plan.leashM);
-      raids.set(seat.id, plan);
     }
     const fromHome = haversineM(home.lat, home.lon, pos.lat, pos.lon);
     if (fromHome > plan.leashM) {
-      return stepToward(arena, pos, home, rand, seat.id);
+      return stepToward(state, seat, pos, homeEntry(state, seat, pos) ?? home, rand, nowMs);
     }
-    return stepToward(arena, pos, plan.goal, rand, seat.id);
+    return stepToward(state, seat, pos, plan.goal, rand, nowMs);
   }
 
-  let heading = headings.get(seat.id) ?? rand() * Math.PI * 2;
-  heading += (rand() - 0.5) * 0.7;
-  const stepM = STEP_MIN_M + rand() * STEP_SPAN_M;
-  let next = fromLocalM(
-    pos.lat,
-    pos.lon,
-    Math.cos(heading) * stepM,
-    Math.sin(heading) * stepM,
-  );
-  next = clampToArena(arena, next);
-  headings.set(seat.id, heading);
-  return next;
+  return randomStep(state, seat, pos, rand, nowMs);
 }
 
 export type WanderOpts = {
@@ -321,7 +391,7 @@ export function wanderSeat(
   if (!seat || seat.mode === "left") return [];
 
   const autoPlant = opts?.autoPlant !== false;
-  const pos = wanderStep(state, seat, rand, autoPlant);
+  const pos = wanderStep(state, seat, rand, autoPlant, nowMs);
   // Remember open trail so we only reset the raid after a bank — never while
   // still walking out of the starter (that trapped bots inside the blob).
   const hadOpenTrail = seat.trail.length > 0 || seat.mode === "trailing";
@@ -336,15 +406,23 @@ export function wanderSeat(
       speedMps: 1.4 + rand() * 2.2,
       clientTsMs: nowMs,
       mock: true,
+      plant: autoPlant ? undefined : false,
     },
     nowMs,
   );
 
   if (hadOpenTrail && seat.mode === "safe" && seat.trail.length === 0) {
-    raids.delete(seatId);
+    raids.delete(keyOf(state, seatId));
   }
 
   return effects;
+}
+
+/** Forget bot memory for a lobby (rematch / delete). */
+export function resetBotMemory(code: string) {
+  for (const k of [...headings.keys()]) if (k.startsWith(`${code}#`)) headings.delete(k);
+  for (const k of [...raids.keys()]) if (k.startsWith(`${code}#`)) raids.delete(k);
+  for (const k of [...lastStepMs.keys()]) if (k.startsWith(`${code}#`)) lastStepMs.delete(k);
 }
 
 export function mulberry32(seed: number) {
@@ -356,10 +434,6 @@ export function mulberry32(seed: number) {
   };
 }
 
-export function isBotNickname(nickname: string): boolean {
-  return /^Bot\d+$/i.test(nickname);
-}
-
 export function seatIsBot(seat: Seat): boolean {
-  return isBotNickname(seat.nickname);
+  return seat.bot;
 }

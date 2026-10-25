@@ -1,5 +1,6 @@
 import type { GameEffect, LobbyPayload, SeatView } from "./api";
 import type { SnackTone } from "../state/appMachine";
+import { sqft } from "./units";
 
 export type SnackEvent = { text: string; tone: SnackTone };
 
@@ -23,14 +24,17 @@ export function snacksFromEffects(
   let boundary: SnackEvent | null = null;
   for (const e of effects) {
     if (e.kind === "banked" && e.seatId === youId) {
-      banked = { text: "You banked land", tone: "good" };
+      const gained = Number((e as { gainedM2?: number }).gainedM2 ?? 0);
+      banked = { text: gained >= 1 ? `+${sqft(gained)} claimed` : "You banked land", tone: "good" };
     }
     if (e.kind === "cut" && e.byId === youId && e.victimId !== youId) {
+      const who = nick(seats, e.victimId as number);
       cut = {
-        text: `You cut ${nick(seats, e.victimId as number)}`,
+        text: e.reason === "captured" ? `You took all of ${who}'s land` : `You cut ${who}`,
         tone: "good",
       };
     }
+
     if (e.kind === "boundaryPush" && e.seatId === youId) {
       boundary = { text: "Outside the boundary", tone: "warn" };
     }

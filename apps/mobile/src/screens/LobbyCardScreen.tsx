@@ -10,6 +10,7 @@ import { BrandMark } from "../components/BrandMark";
 import { formatLatLon } from "../arena/geoProject";
 import { api } from "../lib/api";
 import { colors, fonts } from "../theme/tokens";
+import { feet } from "../lib/units";
 import type { LobbyPayload, Session } from "../state/appMachine";
 
 type Props = {
@@ -78,7 +79,7 @@ export function LobbyCardScreen({
         {formatLatLon(lobby.arena.centerLat, lobby.arena.centerLon)}
       </Text>
       <Text style={styles.meta}>
-        {lobby.arena.radiusM} m · max {lobby.maxSeats}
+        {feet(lobby.arena.radiusM)} radius · max {lobby.maxSeats}
       </Text>
 
       <Text style={styles.rosterLabel}>

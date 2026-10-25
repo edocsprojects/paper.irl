@@ -79,19 +79,31 @@ export interface Fix {
   plant?: boolean;
 }
 
+/**
+ * Paper.io territory as a GeoJSON-style MultiPolygon in lat/lon:
+ * polygons → [outer ring, ...hole rings], every ring closed (first == last).
+ */
+export type Territory = LatLon[][][];
+
+/** Why a seat died: trail touched by someone, or all land taken. */
+export type DeathReason = "cut" | "captured";
+
 export interface Seat {
   id: SeatId;
   nickname: string;
   mode: SeatMode;
   color: string;
-  /** Closed rings (lat/lon), paper.io-style territory. */
-  owned: LatLon[][];
+  owned: Territory;
   /** Open freehand trail while outside owned land. */
   trail: LatLon[];
   position: LatLon | null;
   respawnAt: LatLon | null;
   areaM2: number;
   ghostUntilMs: number | null;
+  /** Simulated player (server-driven), not a phone. */
+  bot: boolean;
+  /** Last death (kill feed / respawn ring placement). */
+  lastDeath: { byId: SeatId; reason: DeathReason; atMs: number; at: LatLon | null } | null;
 }
 
 export interface LobbyState {
@@ -108,20 +120,54 @@ export interface LobbyState {
   plantRadiusM: number;
   pathWidthM: number;
   maxSeats: number;
-  /** Min meters between successive trail samples. */
+  /** Min meters between successive trail samples (raised for noisy GPS). */
   trailSampleM: number;
+  /** Death → respawn-eligible delay. */
+  ghostMs: number;
   /** Soft-reject / push-back when outside arena. */
   boundaryMode: "clamp";
   /** Seats that tapped Play again after ended (same lobby code). */
   rematchReady: Set<SeatId>;
+  /** Recent eliminations, newest last (kill feed + death markers). */
+  feed: FeedEntry[];
+  /** Land-taken notices, newest last (bot-loop steals must still reach phones). */
+  notices: NoticeEntry[];
+  /** Recent (re)spawns, newest last — drives the "pop" animation. */
+  pops: PopEntry[];
+  /** Demo pace multiplier for simulated walkers (bots / autopilot). 1 = real jog. */
+  speedScale: number;
+}
+
+export interface NoticeEntry {
+  atMs: number;
+  kind: "landLost";
+  seatId: SeatId;
+  byId: SeatId;
+  lostM2: number;
+}
+
+export interface PopEntry {
+  atMs: number;
+  seatId: SeatId;
+  at: LatLon;
+}
+
+export interface FeedEntry {
+  atMs: number;
+  victimId: SeatId;
+  byId: SeatId;
+  reason: DeathReason;
+  /** Where the victim was when they died. */
+  at: LatLon | null;
 }
 
 export type Effect =
   | { kind: "planted"; seatId: SeatId; ring: LatLon[] }
   | { kind: "trailOpen"; seatId: SeatId }
   | { kind: "trailExtend"; seatId: SeatId; point: LatLon }
-  | { kind: "banked"; seatId: SeatId; ring: LatLon[]; areaM2: number }
-  | { kind: "cut"; victimId: SeatId; byId: SeatId }
+  | { kind: "banked"; seatId: SeatId; gainedM2: number; areaM2: number }
+  | { kind: "cut"; victimId: SeatId; byId: SeatId; reason: DeathReason }
+  | { kind: "landLost"; seatId: SeatId; byId: SeatId; lostM2: number }
   | { kind: "respawnAssigned"; seatId: SeatId; at: LatLon }
   | { kind: "respawnMoved"; seatId: SeatId; at: LatLon }
   | { kind: "boundaryPush"; seatId: SeatId; at: LatLon }
