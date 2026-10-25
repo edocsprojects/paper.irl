@@ -2,22 +2,24 @@ import { apiBase } from "./config";
 
 export type LatLon = { lat: number; lon: number };
 
-/** Matches server `seatPublicView` / freeplay lobby seats. */
+/** Hardcoded testing location — shown as numbers, not a place name. */
+export const TEST_LOCATION = {
+  lat: 44.97452,
+  lon: -93.23256,
+} as const;
+
 export type SeatView = {
   id: number;
   nickname: string;
   mode: string;
   color: string;
   areaM2: number;
-  /** Open freehand trail (lat/lon), not graph edge ids. */
   trail: LatLon[];
-  /** Closed territory rings (lat/lon). */
   owned: LatLon[][];
   position: LatLon | null;
   respawnAt: LatLon | null;
 };
 
-/** Matches server `lobbyPayload` — freeplay GPS, no path graph. */
 export type LobbyPayload = {
   code: string;
   phase: string;
@@ -34,6 +36,24 @@ export type LobbyPayload = {
   };
   seats: SeatView[];
   top3: SeatView[];
+  rematchReady?: number[];
+};
+
+/** Subset of server @paper-irl/rules Effect kinds used for snackbars. */
+export type GameEffect =
+  | { kind: "banked"; seatId: number }
+  | { kind: "cut"; victimId: number; byId: number }
+  | { kind: "boundaryPush"; seatId: number }
+  | { kind: string; [k: string]: unknown };
+
+export type LobbyWithEffects = LobbyPayload & { effects?: GameEffect[] };
+
+export type CreateLobbyOpts = {
+  durationMs?: number;
+  maxSeats?: number;
+  radiusM?: number;
+  centerLat?: number;
+  centerLon?: number;
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,8 +64,19 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error ?? res.statusText);
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  if (!res.ok) {
+    const err =
+      body && typeof body === "object" && "error" in body
+        ? String((body as { error: unknown }).error)
+        : res.statusText;
+    throw new Error(err);
+  }
   return body as T;
 }
 
@@ -58,14 +89,23 @@ export const api = {
       radiusM: number;
       center: LatLon;
     }>("/health"),
-  createLobby: (durationMs = 15 * 60 * 1000) =>
-    req<{ code: string; phase: string; maxSeats: number; mode: string }>(
-      "/lobbies",
-      {
-        method: "POST",
-        body: JSON.stringify({ durationMs }),
-      },
-    ),
+  createLobby: (opts: CreateLobbyOpts = {}) =>
+    req<{
+      code: string;
+      phase: string;
+      maxSeats: number;
+      mode: string;
+      arena: LobbyPayload["arena"];
+    }>("/lobbies", {
+      method: "POST",
+      body: JSON.stringify({
+        durationMs: opts.durationMs ?? 15 * 60 * 1000,
+        maxSeats: opts.maxSeats ?? 8,
+        radiusM: opts.radiusM ?? 500,
+        centerLat: opts.centerLat ?? TEST_LOCATION.lat,
+        centerLon: opts.centerLon ?? TEST_LOCATION.lon,
+      }),
+    }),
   join: (code: string, nickname: string) =>
     req<{ seat: SeatView; phase: string }>(`/lobbies/${code}/join`, {
       method: "POST",
@@ -83,12 +123,25 @@ export const api = {
     }),
   get: (code: string) => req<LobbyPayload>(`/lobbies/${code}`),
   fix: (code: string, seatId: number, fix: Record<string, unknown>) =>
-    req<LobbyPayload>(`/lobbies/${code}/fix`, {
+    req<LobbyWithEffects>(`/lobbies/${code}/fix`, {
       method: "POST",
       body: JSON.stringify({ seatId, fix }),
     }),
-  autopilot: (code: string, seatId: number) =>
-    req<LobbyPayload>(`/lobbies/${code}/autopilot`, {
+  autopilot: (code: string, seatId: number, opts?: { autoPlant?: boolean }) =>
+    req<LobbyWithEffects>(`/lobbies/${code}/autopilot`, {
+      method: "POST",
+      body: JSON.stringify({
+        seatId,
+        autoPlant: opts?.autoPlant !== false,
+      }),
+    }),
+  rematchReady: (code: string, seatId: number) =>
+    req<LobbyPayload>(`/lobbies/${code}/rematch/ready`, {
+      method: "POST",
+      body: JSON.stringify({ seatId }),
+    }),
+  rematchStart: (code: string, seatId: number) =>
+    req<LobbyPayload>(`/lobbies/${code}/rematch/start`, {
       method: "POST",
       body: JSON.stringify({ seatId }),
     }),

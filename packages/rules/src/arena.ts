@@ -10,11 +10,23 @@ export const KELLER = {
 } as const;
 
 export function buildKellerArena(): Arena {
+  return buildArena();
+}
+
+/** Keller-centered freeplay arena; radius configurable (default 500 m). */
+export function buildArena(opts?: {
+  radiusM?: number;
+  centerLat?: number;
+  centerLon?: number;
+}): Arena {
+  const radiusM = Math.max(50, Math.min(5000, opts?.radiusM ?? KELLER.radiusM));
+  const centerLat = opts?.centerLat ?? KELLER.lat;
+  const centerLon = opts?.centerLon ?? KELLER.lon;
   return {
-    id: "keller-freeplay-v1",
-    centerLat: KELLER.lat,
-    centerLon: KELLER.lon,
-    radiusM: KELLER.radiusM,
+    id: `keller-freeplay-r${Math.round(radiusM)}`,
+    centerLat,
+    centerLon,
+    radiusM,
     pathWidthM: KELLER.pathWidthM,
     starterRadiusM: KELLER.starterRadiusM,
   };

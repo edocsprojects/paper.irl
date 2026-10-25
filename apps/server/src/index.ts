@@ -1,12 +1,16 @@
 import Fastify from "fastify";
 import {
   applyFix,
+  buildArena,
   buildKellerArena,
   createLobby,
   joinLobby,
+  markRematchReady,
   mulberry32,
+  seatIsBot,
   seatPublicView,
   startLobby,
+  startRematch,
   tickLobby,
   topScores,
   wanderSeat,
@@ -20,16 +24,20 @@ import { fillBots, startBotLoop, stopBotLoop, tickBots } from "./bots.js";
  * Live play state is in-memory. Postgres is optional (DATABASE_URL).
  * Freeplay MVP: GPS polylines inside Keller circle (no path-graph required).
  */
-const arena = buildKellerArena();
+const defaultArena = buildKellerArena();
 const lobbies = new Map<string, LobbyState>();
 
+/** Random unused 6-character lobby code. */
 function code() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "KELL-";
-  for (let i = 0; i < 4; i++) {
-    s += alphabet[Math.floor(Math.random() * alphabet.length)]!;
+  for (let attempt = 0; attempt < 64; attempt++) {
+    let s = "";
+    for (let i = 0; i < 6; i++) {
+      s += alphabet[Math.floor(Math.random() * alphabet.length)]!;
+    }
+    if (!lobbies.has(s)) return s;
   }
-  return s;
+  throw new Error("code_exhausted");
 }
 
 function lobbyPayload(lobby: LobbyState) {
@@ -50,6 +58,7 @@ function lobbyPayload(lobby: LobbyState) {
     },
     seats: [...lobby.seats.values()].map(seatPublicView),
     top3: topScores(lobby, 3).map(seatPublicView),
+    rematchReady: [...lobby.rematchReady],
   };
 }
 
@@ -95,27 +104,63 @@ async function main() {
   app.get("/health", async () => ({
     ok: true,
     mode: "freeplay",
-    arena: arena.id,
-    radiusM: arena.radiusM,
-    center: { lat: arena.centerLat, lon: arena.centerLon },
+    arena: defaultArena.id,
+    radiusM: defaultArena.radiusM,
+    center: { lat: defaultArena.centerLat, lon: defaultArena.centerLon },
   }));
 
   app.post<{
-    Body: { durationMs?: number };
+    Body: {
+      durationMs?: number;
+      maxSeats?: number;
+      radiusM?: number;
+      centerLat?: number;
+      centerLon?: number;
+    };
   }>("/lobbies", async (req) => {
     const c = code();
-    const lobby = createLobby(c, arena, {
+    stopBotLoop(c);
+    const maxSeats = Math.max(
+      2,
+      Math.min(8, Math.round(req.body?.maxSeats ?? 8)),
+    );
+    const radiusM = Math.max(
+      50,
+      Math.min(5000, Math.round(req.body?.radiusM ?? 500)),
+    );
+    const centerLat =
+      typeof req.body?.centerLat === "number"
+        ? req.body.centerLat
+        : defaultArena.centerLat;
+    const centerLon =
+      typeof req.body?.centerLon === "number"
+        ? req.body.centerLon
+        : defaultArena.centerLon;
+    const playArena = buildArena({ radiusM, centerLat, centerLon });
+    const lobby = createLobby(c, playArena, {
       durationMs: req.body?.durationMs ?? 15 * 60 * 1000,
+      maxSeats,
     });
     lobbies.set(c, lobby);
     if (db) {
       await db.query(
         `INSERT INTO lobbies(code, duration_ms, phase) VALUES ($1,$2,$3)
-         ON CONFLICT (code) DO NOTHING`,
+         ON CONFLICT (code) DO UPDATE SET duration_ms=$2, phase=$3`,
         [c, lobby.durationMs, lobby.phase],
       );
     }
-    return { code: c, phase: lobby.phase, maxSeats: lobby.maxSeats, mode: "freeplay" };
+    return {
+      code: c,
+      phase: lobby.phase,
+      maxSeats: lobby.maxSeats,
+      mode: "freeplay",
+      arena: {
+        id: playArena.id,
+        centerLat: playArena.centerLat,
+        centerLon: playArena.centerLon,
+        radiusM: playArena.radiusM,
+      },
+    };
   });
 
   app.post<{
@@ -156,7 +201,7 @@ async function main() {
       if (!lobby) return reply.code(404).send({ error: "not_found" });
       try {
         const effects = startLobby(lobby, Date.now());
-        startBotLoop(lobby, 1000);
+        startBotLoop(lobby, 200);
         if (db) {
           await db.query(`UPDATE lobbies SET phase=$2 WHERE code=$1`, [
             lobby.code,
@@ -191,20 +236,86 @@ async function main() {
     };
   });
 
-  /** Auto-pilot one seat (join-bots / host-bots human automation). */
+  /** Seat taps Play again — waits for others / host rematch start. */
   app.post<{
     Params: { code: string };
-    Body: { seatId: number; seed?: number };
+    Body: { seatId: number };
+  }>("/lobbies/:code/rematch/ready", async (req, reply) => {
+    const lobby = lobbies.get(req.params.code.toUpperCase());
+    if (!lobby) return reply.code(404).send({ error: "not_found" });
+    try {
+      // Bots auto-ready so human rematch isn't blocked in demo modes.
+      for (const seat of lobby.seats.values()) {
+        if (seatIsBot(seat)) lobby.rematchReady.add(seat.id);
+      }
+      const effects = markRematchReady(lobby, req.body.seatId);
+      return { effects, ...lobbyPayload(lobby) };
+    } catch (e) {
+      return reply.code(400).send({ error: String(e) });
+    }
+  });
+
+  /** Host (or last ready seat when all humans ready) starts rematch. */
+  app.post<{
+    Params: { code: string };
+    Body: { seatId: number };
+  }>("/lobbies/:code/rematch/start", async (req, reply) => {
+    const lobby = lobbies.get(req.params.code.toUpperCase());
+    if (!lobby) return reply.code(404).send({ error: "not_found" });
+    if (lobby.phase !== "ended") {
+      return reply.code(400).send({ error: "bad_phase" });
+    }
+    const seatId = req.body.seatId;
+    if (!lobby.seats.has(seatId)) {
+      return reply.code(404).send({ error: "no_seat" });
+    }
+    try {
+      for (const seat of lobby.seats.values()) {
+        if (seatIsBot(seat)) lobby.rematchReady.add(seat.id);
+      }
+      if (!lobby.rematchReady.has(seatId)) {
+        markRematchReady(lobby, seatId);
+      }
+      const humans = [...lobby.seats.values()].filter((s) => !seatIsBot(s));
+      const humansReady = humans.every((s) => lobby.rematchReady.has(s.id));
+      const isHost = seatId === Math.min(...lobby.seats.keys());
+      if (!humansReady && !isHost) {
+        return reply.code(400).send({ error: "waiting_for_players" });
+      }
+      stopBotLoop(lobby.code);
+      const effects = startRematch(lobby, Date.now());
+      startBotLoop(lobby, 200);
+      if (db) {
+        await db.query(`UPDATE lobbies SET phase=$2 WHERE code=$1`, [
+          lobby.code,
+          lobby.phase,
+        ]);
+      }
+      return { effects, ...lobbyPayload(lobby) };
+    } catch (e) {
+      return reply.code(400).send({ error: String(e) });
+    }
+  });
+
+  /**
+   * Auto-pilot the local human seat: movement only by default.
+   * Client sends autoPlant:false so Ethan taps to plant/respawn.
+   * Bots still auto-plant via tickBots.
+   */
+  app.post<{
+    Params: { code: string };
+    Body: { seatId: number; seed?: number; autoPlant?: boolean };
   }>("/lobbies/:code/autopilot", async (req, reply) => {
     const lobby = lobbies.get(req.params.code.toUpperCase());
     if (!lobby) return reply.code(404).send({ error: "not_found" });
     const now = Date.now();
-    tickBots(lobby, now);
+    const effects = tickBots(lobby, now);
     const rand = mulberry32((req.body.seed ?? 1) + req.body.seatId * 97 + now);
     const seat = lobby.seats.get(req.body.seatId);
     if (!seat) return reply.code(404).send({ error: "no_seat" });
-    wanderSeat(lobby, seat.id, rand, now);
-    return lobbyPayload(lobby);
+    const autoPlant = req.body.autoPlant !== false;
+    effects.push(...wanderSeat(lobby, seat.id, rand, now, { autoPlant }));
+    return { effects, ...lobbyPayload(lobby) };
   });
 
   app.get<{ Params: { code: string } }>(
@@ -222,7 +333,7 @@ async function main() {
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen({ port, host: "0.0.0.0" });
-  console.log(`paper.irl server on :${port} mode=freeplay arena=${arena.id}`);
+  console.log(`paper.irl server on :${port} mode=freeplay arena=${defaultArena.id}`);
 }
 
 main().catch((err) => {

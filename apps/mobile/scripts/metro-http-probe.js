@@ -170,8 +170,8 @@ async function main() {
   console.log("OK: bare /index.bundle serves the app (stale binary cannot hit ./index redbox)");
 
   for (const [name, res] of [["virtual", virtual], ["mono", mono], ["bare", bare]]) {
-    if (!res.body.includes("LobbyScreen")) {
-      fail(`${name} bundle does not contain the app (LobbyScreen missing)`);
+    if (!res.body.includes("HomeScreen") && !res.body.includes("ArenaView")) {
+      fail(`${name} bundle does not contain the app (HomeScreen/ArenaView missing)`);
     }
   }
   console.log("OK: all three entry URLs bundle the paper.irl app");

@@ -213,3 +213,276 @@ export function polylineLengthM(line: LatLon[]): number {
   }
   return len;
 }
+
+/**
+ * Convex hull of lat/lon points (monotone chain in local meters).
+ * Returns a closed ring (first == last) suitable for territory paint.
+ */
+export function convexHullLatLon(points: LatLon[]): LatLon[] {
+  if (points.length === 0) return [];
+  if (points.length === 1) return [{ ...points[0]! }, { ...points[0]! }];
+  const origin = points[0]!;
+  const pts = points.map((p) => {
+    const { x, y } = toLocalM(origin.lat, origin.lon, p.lat, p.lon);
+    return { x, y, p };
+  });
+  pts.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+
+  const cross = (
+    o: { x: number; y: number },
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+  const lower: typeof pts = [];
+  for (const pt of pts) {
+    while (
+      lower.length >= 2 &&
+      cross(lower[lower.length - 2]!, lower[lower.length - 1]!, pt) <= 0
+    ) {
+      lower.pop();
+    }
+    lower.push(pt);
+  }
+  const upper: typeof pts = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const pt = pts[i]!;
+    while (
+      upper.length >= 2 &&
+      cross(upper[upper.length - 2]!, upper[upper.length - 1]!, pt) <= 0
+    ) {
+      upper.pop();
+    }
+    upper.push(pt);
+  }
+  lower.pop();
+  upper.pop();
+  const hull = [...lower, ...upper].map((h) => ({ ...h.p }));
+  if (hull.length === 0) return [{ ...origin }, { ...origin }];
+  if (
+    hull.length < 2 ||
+    hull[0]!.lat !== hull[hull.length - 1]!.lat ||
+    hull[0]!.lon !== hull[hull.length - 1]!.lon
+  ) {
+    hull.push({ ...hull[0]! });
+  }
+  return hull;
+}
+
+/** Merge multiple rings into one connected outer polygon (convex hull). */
+export function mergeRingsToOne(rings: LatLon[][]): LatLon[] {
+  const pts: LatLon[] = [];
+  for (const ring of rings) {
+    for (const p of ring) pts.push(p);
+  }
+  return convexHullLatLon(pts);
+}
+
+type LocalPt = { x: number; y: number };
+
+function insideHalfPlane(
+  p: LocalPt,
+  a: LocalPt,
+  b: LocalPt,
+): boolean {
+  // Left of directed edge a→b (CCW interior).
+  return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x) >= -1e-9;
+}
+
+function lineIntersect(
+  p1: LocalPt,
+  p2: LocalPt,
+  a: LocalPt,
+  b: LocalPt,
+): LocalPt {
+  const den =
+    (p1.x - p2.x) * (a.y - b.y) - (p1.y - p2.y) * (a.x - b.x);
+  if (Math.abs(den) < 1e-12) return { ...p2 };
+  const t =
+    ((p1.x - a.x) * (a.y - b.y) - (p1.y - a.y) * (a.x - b.x)) / den;
+  return {
+    x: p1.x + t * (p2.x - p1.x),
+    y: p1.y + t * (p2.y - p1.y),
+  };
+}
+
+/** Sutherland–Hodgman clip of convex subject against one convex clip ring (local m). */
+function clipConvexLocal(subject: LocalPt[], clip: LocalPt[]): LocalPt[] {
+  let out = subject.slice();
+  for (let i = 0; i < clip.length; i++) {
+    const a = clip[i]!;
+    const b = clip[(i + 1) % clip.length]!;
+    const inp = out;
+    out = [];
+    if (inp.length === 0) return [];
+    let s = inp[inp.length - 1]!;
+    for (const e of inp) {
+      const eIn = insideHalfPlane(e, a, b);
+      const sIn = insideHalfPlane(s, a, b);
+      if (eIn) {
+        if (!sIn) out.push(lineIntersect(s, e, a, b));
+        out.push(e);
+      } else if (sIn) {
+        out.push(lineIntersect(s, e, a, b));
+      }
+      s = e;
+    }
+  }
+  return out;
+}
+
+function ensureCcw(pts: LocalPt[]): LocalPt[] {
+  if (pts.length < 3) return pts;
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % pts.length]!;
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return sum < 0 ? pts.slice().reverse() : pts;
+}
+
+function localArea(pts: LocalPt[]): number {
+  if (pts.length < 3) return 0;
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % pts.length]!;
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
+function ringToLocalCcw(
+  originLat: number,
+  originLon: number,
+  ring: LatLon[],
+): LocalPt[] {
+  return ensureCcw(ringLocals(originLat, originLon, ring));
+}
+
+/**
+ * Intersection of two convex lat/lon rings as a closed ring, or null if empty.
+ * Circles and hull-backed territory are convex, so SH clip is exact.
+ */
+export function intersectConvexRings(
+  a: LatLon[],
+  b: LatLon[],
+): LatLon[] | null {
+  if (a.length < 3 || b.length < 3) return null;
+  const origin = a[0]!;
+  const la = ringToLocalCcw(origin.lat, origin.lon, a);
+  const lb = ringToLocalCcw(origin.lat, origin.lon, b);
+  if (la.length < 3 || lb.length < 3) return null;
+  const inter = clipConvexLocal(la, lb);
+  if (inter.length < 3 || localArea(inter) < 1e-3) return null;
+  const ring = inter.map((p) => fromLocalM(origin.lat, origin.lon, p.x, p.y));
+  const f = ring[0]!;
+  const l = ring[ring.length - 1]!;
+  if (f.lat !== l.lat || f.lon !== l.lon) ring.push({ ...f });
+  return ring;
+}
+
+/** Intersection area (m²) of two convex rings. 0 if disjoint. */
+export function ringsIntersectionAreaM2(a: LatLon[], b: LatLon[]): number {
+  const inter = intersectConvexRings(a, b);
+  return inter ? ringAreaM2(inter) : 0;
+}
+
+/** Densify a ring so exterior sampling survives coarse polygons. */
+function densifyRing(ring: LatLon[], perEdge: number): LatLon[] {
+  const pts = ringLocals(ring[0]!.lat, ring[0]!.lon, ring);
+  const out: LatLon[] = [];
+  const origin = ring[0]!;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % pts.length]!;
+    for (let k = 0; k < perEdge; k++) {
+      const t = k / perEdge;
+      out.push(
+        fromLocalM(
+          origin.lat,
+          origin.lon,
+          a.x + (b.x - a.x) * t,
+          a.y + (b.y - a.y) * t,
+        ),
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Fallback when a clean convex bite is not representable: keep a disk
+ * inside `subject` that does not intersect `cutter`.
+ */
+function shrinkOutsideCutter(
+  subject: LatLon[],
+  cutter: LatLon[],
+): LatLon[] | null {
+  let center = ringCentroid(subject);
+  if (pointInRing(center, cutter)) {
+    let best: LatLon | null = null;
+    let bestD = -1;
+    for (const p of densifyRing(subject, 6)) {
+      if (pointInRing(p, cutter)) continue;
+      const d = distanceToRingEdgeM(p, cutter);
+      if (d > bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    if (!best) return null;
+    center = best;
+  }
+  let r = distanceToRingEdgeM(center, cutter) - 0.75;
+  if (r < 4) return null;
+  // Stay roughly inside the original subject.
+  const toEdge = distanceToRingEdgeM(center, subject);
+  if (pointInRing(center, subject)) {
+    // Distance to edge while inside ≈ inradius along nearest boundary.
+    r = Math.min(r, Math.max(4, toEdge - 0.5));
+  }
+  r = Math.min(r, Math.sqrt(ringAreaM2(subject) / Math.PI));
+  if (r < 4) return null;
+  const disk = circleRing(center, r, 16);
+  if (ringsIntersectionAreaM2(disk, cutter) > 0.5) return null;
+  return disk;
+}
+
+/**
+ * Convex subject minus convex cutter.
+ * Side-bite: hull of exterior samples ∪ intersection rim; if that still
+ * overlaps the cutter, shrink to a disjoint disk. Full cover → null.
+ */
+export function differenceConvexRings(
+  subject: LatLon[],
+  cutter: LatLon[],
+): LatLon[] | null {
+  if (subject.length < 3) return null;
+  const overlap = ringsIntersectionAreaM2(subject, cutter);
+  if (overlap < 0.5) return subject.map((p) => ({ ...p }));
+  const subArea = ringAreaM2(subject);
+  if (subArea < 1) return null;
+  // Fully (or nearly) covered → gone (claimant owns the fill).
+  if (overlap >= subArea * 0.92) return null;
+
+  const kept: LatLon[] = [];
+  for (const p of densifyRing(subject, 8)) {
+    if (!pointInRing(p, cutter)) kept.push(p);
+  }
+  const inter = intersectConvexRings(subject, cutter);
+  if (inter) {
+    for (const p of inter) kept.push({ ...p });
+  }
+  if (kept.length >= 3) {
+    const hull = convexHullLatLon(kept);
+    if (
+      ringAreaM2(hull) >= 50 &&
+      ringsIntersectionAreaM2(hull, cutter) < 0.5
+    ) {
+      return hull;
+    }
+  }
+  return shrinkOutsideCutter(subject, cutter);
+}

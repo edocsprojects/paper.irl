@@ -70,6 +70,13 @@ export interface Fix {
   speedMps: number;
   clientTsMs: number;
   mock?: boolean;
+  /**
+   * Plant / respawn control while in toPlant:
+   * - true: plant when within plantRadius (tap-to-spawn)
+   * - false: move only — never auto-plant (Manual drag)
+   * - undefined: plant when within plantRadius (bots / Auto sim)
+   */
+  plant?: boolean;
 }
 
 export interface Seat {
@@ -105,6 +112,8 @@ export interface LobbyState {
   trailSampleM: number;
   /** Soft-reject / push-back when outside arena. */
   boundaryMode: "clamp";
+  /** Seats that tapped Play again after ended (same lobby code). */
+  rematchReady: Set<SeatId>;
 }
 
 export type Effect =
@@ -117,4 +126,5 @@ export type Effect =
   | { kind: "respawnMoved"; seatId: SeatId; at: LatLon }
   | { kind: "boundaryPush"; seatId: SeatId; at: LatLon }
   | { kind: "phase"; phase: LobbyPhase }
+  | { kind: "rematchReady"; seatId: SeatId; readyIds: SeatId[] }
   | { kind: "rejected"; seatId: SeatId; reason: string };

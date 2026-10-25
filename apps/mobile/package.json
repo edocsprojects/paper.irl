@@ -9,6 +9,8 @@
     "ios": "expo run:ios",
     "prebuild:ios": "expo prebuild --platform ios --no-install",
     "verify:bundle": "node ./scripts/verify-bundle-entry.js",
+    "verify:rules-metro": "node ./scripts/verify-rules-metro-resolve.js",
+    "verify:trails": "node ./scripts/verify-map-trails.js && VERIFY_TRAILS_BREAK=1 node ./scripts/verify-map-trails.js && node ./scripts/verify-trail-paint-payload.js && VERIFY_TRAIL_PAINT_BREAK=1 node ./scripts/verify-trail-paint-payload.js",
     "verify:metro": "node ./scripts/metro-http-probe.js",
     "ios:clean": "node ./scripts/ios-clean.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",

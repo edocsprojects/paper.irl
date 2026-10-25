@@ -35,6 +35,85 @@ function section(title) {
   console.log(`\n=== ${title} ===`);
 }
 
+section("@paper-irl/rules Metro resolve (.js → .ts source)");
+{
+  const rulesProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-rules-metro-resolve.js")],
+    { cwd: projectRoot, encoding: "utf8", env: process.env },
+  );
+  process.stdout.write(rulesProbe.stdout || "");
+  process.stderr.write(rulesProbe.stderr || "");
+  if (rulesProbe.status !== 0) {
+    fail(
+      `verify-rules-metro-resolve exited ${rulesProbe.status} — Metro cannot resolve packages/rules ./types.js`,
+    );
+  }
+  ok("verify-rules-metro-resolve (./types.js → types.ts)");
+}
+
+section("map trail render HTML (MapLibre layer, not payload-only)");
+{
+  const trailProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-map-trails.js")],
+    { cwd: projectRoot, encoding: "utf8", env: process.env },
+  );
+  process.stdout.write(trailProbe.stdout || "");
+  process.stderr.write(trailProbe.stderr || "");
+  if (trailProbe.status !== 0) {
+    fail(`verify-map-trails exited ${trailProbe.status}`);
+  }
+  const breakProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-map-trails.js")],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      env: { ...process.env, VERIFY_TRAILS_BREAK: "1" },
+    },
+  );
+  process.stdout.write(breakProbe.stdout || "");
+  process.stderr.write(breakProbe.stderr || "");
+  if (breakProbe.status !== 0) {
+    fail(
+      `verify-map-trails BREAK self-check exited ${breakProbe.status} (must fail when layer removed)`,
+    );
+  }
+  ok("verify-map-trails + BREAK self-check");
+}
+
+section("trail paint payload (__paperPaint / setData LineString)");
+{
+  const paintProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-trail-paint-payload.js")],
+    { cwd: projectRoot, encoding: "utf8", env: process.env },
+  );
+  process.stdout.write(paintProbe.stdout || "");
+  process.stderr.write(paintProbe.stderr || "");
+  if (paintProbe.status !== 0) {
+    fail(`verify-trail-paint-payload exited ${paintProbe.status}`);
+  }
+  const paintBreak = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-trail-paint-payload.js")],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      env: { ...process.env, VERIFY_TRAIL_PAINT_BREAK: "1" },
+    },
+  );
+  process.stdout.write(paintBreak.stdout || "");
+  process.stderr.write(paintBreak.stderr || "");
+  if (paintBreak.status !== 0) {
+    fail(
+      `verify-trail-paint-payload BREAK exited ${paintBreak.status} (must fail when width=0 / setData stripped / features empty)`,
+    );
+  }
+  ok("verify-trail-paint-payload + BREAK (width0 / noSetData / emptyFeatures)");
+}
+
 section("static entry / native config");
 
 if (pkg.main !== "index.js") fail(`package.json main is ${pkg.main}, expected index.js`);
@@ -199,6 +278,16 @@ const exportResult = spawnSync(
 const exportLog = `${exportResult.stdout}\n${exportResult.stderr}`;
 if (exportResult.status !== 0) {
   console.error(exportLog);
+  if (/Unable to resolve module \.\/types\.js/.test(exportLog)) {
+    fail(
+      "expo export: Unable to resolve ./types.js from @paper-irl/rules — Metro must remap packages/rules .js→.ts (see metro.config.js resolveRequest)",
+    );
+  }
+  if (/Unable to resolve module \.\/[\w.-]+\.js from .*packages\/rules/.test(exportLog)) {
+    fail(
+      "expo export: packages/rules .js import failed — Metro resolveRequest remap broken",
+    );
+  }
   if (/Unable to resolve ["']@babel\/runtime/.test(exportLog)) {
     fail("expo export: @babel/runtime resolve failed");
   }
@@ -246,6 +335,11 @@ const rootExport = spawnSync(
 const rootLog = `${rootExport.stdout}\n${rootExport.stderr}`;
 if (rootExport.status !== 0) {
   console.error(rootLog);
+  if (/Unable to resolve module \.\/types\.js/.test(rootLog)) {
+    fail(
+      "root-cwd export: Unable to resolve ./types.js from @paper-irl/rules — Metro .js→.ts remap broken",
+    );
+  }
   if (/Unable to resolve ["']@babel\/runtime/.test(rootLog)) {
     fail("root-cwd export: @babel/runtime resolve failed");
   }
