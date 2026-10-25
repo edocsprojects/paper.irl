@@ -7,5 +7,6 @@ dist/
 .DS_Store
 coverage/
 .turbo/
+.expo/
 data/*.bin
 !data/keller/.gitkeep

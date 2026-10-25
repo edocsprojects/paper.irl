@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import Constants from "expo-constants";
 
 export type LaunchMode = "human" | "join-bots" | "host-bots";
@@ -12,10 +13,18 @@ export function launchMode(): LaunchMode {
   return "human";
 }
 
-/** Android emulator reaches host machine via 10.0.2.2 */
+/**
+ * Default API host for simulators:
+ * - Android emulator → host machine via 10.0.2.2
+ * - iOS Simulator → host loopback via 127.0.0.1
+ * Physical device: set EXPO_PUBLIC_API_URL=http://<your-lan-ip>:3001
+ */
 export function apiBase(): string {
-  return (
-    process.env.EXPO_PUBLIC_API_URL ??
-    "http://10.0.2.2:3001"
-  );
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  if (Platform.OS === "ios") {
+    return "http://127.0.0.1:3001";
+  }
+  return "http://10.0.2.2:3001";
 }

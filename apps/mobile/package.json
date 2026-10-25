@@ -6,10 +6,15 @@
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
+    "ios": "expo run:ios",
+    "prebuild:ios": "expo prebuild --platform ios --no-install",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "human": "EXPO_PUBLIC_LAUNCH=human expo start --android",
     "join-bots": "EXPO_PUBLIC_LAUNCH=join-bots expo start --android",
-    "host-bots": "EXPO_PUBLIC_LAUNCH=host-bots expo start --android"
+    "host-bots": "EXPO_PUBLIC_LAUNCH=host-bots expo start --android",
+    "human:ios": "EXPO_PUBLIC_LAUNCH=human expo run:ios",
+    "join-bots:ios": "EXPO_PUBLIC_LAUNCH=join-bots expo run:ios",
+    "host-bots:ios": "EXPO_PUBLIC_LAUNCH=host-bots expo run:ios"
   },
   "dependencies": {
     "@paper-irl/rules": "workspace:*",

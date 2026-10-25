@@ -22,7 +22,14 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "irl.paper.demo"
+      "bundleIdentifier": "irl.paper.demo",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "paper.irl uses your location to play on campus paths.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "plugins": [
       [

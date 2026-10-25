@@ -12,6 +12,10 @@
     "mobile": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=human pnpm --filter @paper-irl/mobile android",
     "mobile:join-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=join-bots pnpm --filter @paper-irl/mobile android",
     "mobile:host-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=host-bots pnpm --filter @paper-irl/mobile android",
+    "mobile:ios": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=human pnpm --filter @paper-irl/mobile ios",
+    "mobile:ios:join-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=join-bots pnpm --filter @paper-irl/mobile ios",
+    "mobile:ios:host-bots": "pnpm --filter @paper-irl/rules build && EXPO_PUBLIC_LAUNCH=host-bots pnpm --filter @paper-irl/mobile ios",
+    "mobile:prebuild:ios": "pnpm --filter @paper-irl/mobile prebuild:ios",
     "typecheck": "pnpm -r run typecheck"
   },
   "engines": {
