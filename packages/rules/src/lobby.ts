@@ -172,21 +172,30 @@ function snapFix(
   graph: LobbyGraph,
   fix: Fix,
 ): { edgeId: EdgeId; nodeId: NodeId; distM: number } | null {
-  let best: { edgeId: EdgeId; nodeId: NodeId; distM: number } | null = null;
-  for (const e of graph.edges) {
-    const na = graph.nodes[e.a]!;
-    const nb = graph.nodes[e.b]!;
-    const da = haversineM(fix.lat, fix.lon, na.lat, na.lon);
-    const db = haversineM(fix.lat, fix.lon, nb.lat, nb.lon);
-    // Approximate: distance to nearer endpoint as stand-in for segment proj.
-    const dist = Math.min(da, db);
-    const nodeId = da <= db ? e.a : e.b;
-    if (!best || dist < best.distM) {
-      best = { edgeId: e.id, nodeId, distM: dist };
+  // Nearest node, then best incident edge (scales to OSM-sized graphs).
+  let bestNode: { nodeId: NodeId; distM: number } | null = null;
+  for (const n of graph.nodes) {
+    const dist = haversineM(fix.lat, fix.lon, n.lat, n.lon);
+    if (!bestNode || dist < bestNode.distM) {
+      bestNode = { nodeId: n.id, distM: dist };
     }
   }
-  if (!best || best.distM > 45) return null;
-  return best;
+  if (!bestNode || bestNode.distM > 45) return null;
+  const incident = graph.nodeEdges.get(bestNode.nodeId) ?? [];
+  if (!incident.length) return null;
+  let bestEdge = incident[0]!;
+  let bestEdgeDist = Infinity;
+  for (const eId of incident) {
+    const e = graph.edges[eId]!;
+    const otherId = e.a === bestNode.nodeId ? e.b : e.a;
+    const other = graph.nodes[otherId]!;
+    const d = haversineM(fix.lat, fix.lon, other.lat, other.lon);
+    if (d < bestEdgeDist) {
+      bestEdgeDist = d;
+      bestEdge = eId;
+    }
+  }
+  return { edgeId: bestEdge, nodeId: bestNode.nodeId, distM: bestNode.distM };
 }
 
 function grantStarter(state: LobbyState, seat: Seat, atNode: NodeId): EdgeId[] {

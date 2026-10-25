@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>paper.irl — Keller Hall demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <div id="map"></div>
+
+      <header class="chrome">
+        <div class="board" id="leaderboard" aria-label="Top 3"></div>
+        <div class="clock-wrap">
+          <span id="timer" class="timer">15:00</span>
+        </div>
+      </header>
+
+      <div id="snacks" class="snacks" aria-live="polite"></div>
+
+      <div id="spawn" class="spawn hidden" role="dialog" aria-modal="true">
+        <div class="spawn-card">
+          <p class="spawn-kicker" id="spawn-kicker">Match start</p>
+          <h1 id="spawn-title">Ready to plant</h1>
+          <p class="spawn-copy" id="spawn-copy">
+            Drop onto your marker and start claiming paths around Keller Hall.
+          </p>
+          <button id="btn-spawn" type="button">Spawn</button>
+        </div>
+      </div>
+
+      <div id="ended" class="spawn hidden" role="dialog" aria-modal="true">
+        <div class="spawn-card">
+          <p class="spawn-kicker">Time’s up</p>
+          <h1>Final top 3</h1>
+          <ol id="final-top" class="final-top"></ol>
+          <button id="btn-restart" type="button">Play again</button>
+        </div>
+      </div>
+
+      <div class="demo-bar">
+        <button id="btn-play" type="button">Pause</button>
+        <label class="speed">
+          Speed
+          <select id="speed">
+            <option value="15">15×</option>
+            <option value="30" selected>30×</option>
+            <option value="60">60×</option>
+            <option value="120">120×</option>
+          </select>
+        </label>
+      </div>
+
+      <footer class="attr">© OpenStreetMap · OpenFreeMap · demo</footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
