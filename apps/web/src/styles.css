@@ -1670,3 +1670,21 @@ select {
   flex: 1;
   min-height: 220px;
 }
+
+/* Third home action: distinct dark button. */
+.btn.events-btn {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.btn.events-btn:hover {
+  opacity: 0.9;
+}
+
+/* Persistent "you're out" snackbar. */
+.snackbar.dead {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}

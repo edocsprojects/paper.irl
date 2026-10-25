@@ -10,7 +10,8 @@ import "./styles.css";
  * Your app's flow (Home → Create/Join → Lobby → countdown → Game → Results)
  * in the teammate's design. Home + Settings tabs are always visible.
  */
-type Screen = "intro" | "home" | "create" | "join" | "lobby" | "event" | "game" | "results" | "settings";
+type Screen = "intro" | "home" | "create" | "join" | "lobby" | "events" | "event" | "game" | "results" | "settings";
+const DEAD_TEXT = "You're out — head back to your spawn area";
 const EVENT_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Compact HUD countdown for multi-day events: "6d 23h", else h:mm:ss. */
@@ -150,7 +151,9 @@ async function main() {
 
   /** Single-slot snackbar about YOU; fades after 3 s. */
   let snackTimer = 0;
+  let deadShown = false;
   function snack(text: string, tone: "good" | "bad" | "warn" | "" = "") {
+    if (deadShown) return; // while you're out, the snackbar only says where to go
     const el = $("snackbar");
     el.textContent = text;
     el.className = `snackbar ${tone}`.trim();
@@ -290,7 +293,12 @@ async function main() {
   );
 
   // ---------- Community event (Keller Hall) ----------
-  $("btn-events").addEventListener("click", async () => {
+  $("btn-events").addEventListener("click", () => {
+    if (session?.kind === "event" && !!session.sim === isSim() && phase === "playing") show("game");
+    else show("events");
+  });
+
+  $("event-keller").addEventListener("click", async () => {
     // Reuse the open event unless Settings switched Simulation / Real GPS.
     if (session?.kind === "event" && !!session.sim === isSim()) {
       show(phase === "playing" ? "game" : "event");
@@ -333,6 +341,7 @@ async function main() {
         return;
       }
     }
+    resetSnackbar();
     phase = "playing";
     plantedOnce = false;
     seen = { feed: 0, notice: 0, pop: 0 };
@@ -481,7 +490,14 @@ async function main() {
     }
   });
 
+  function resetSnackbar() {
+    deadShown = false;
+    window.clearTimeout(snackTimer);
+    $("snackbar").className = "snackbar hidden";
+  }
+
   function leaveSession() {
+    resetSnackbar();
     if (session?.kind === "live" || (session?.kind === "event" && !session.sim)) live.leave();
     if (session?.kind === "event" && session.sim) session.sim.youActive = false;
     session = null;
@@ -497,6 +513,7 @@ async function main() {
 
   // ---------- Countdown → Game ----------
   function beginCountdown() {
+    resetSnackbar();
     phase = "countdown";
     countdownEnd = performance.now() + COUNTDOWN_STEP_MS * 3;
     seen = { feed: 0, notice: 0, pop: 0 };
@@ -625,6 +642,7 @@ async function main() {
     }
     for (const p of s.pops) {
       if (p.atMs <= seen.pop || p.seatId !== me) continue;
+      deadShown = false; // planted again: the "you're out" snackbar is done
       snack(plantedOnce ? "You're back in!" : "You're in — leave your color to draw a trail", "good");
       plantedOnce = true;
     }
@@ -817,14 +835,23 @@ async function main() {
       const mode = s.you?.mode;
       const waitingFirstSpawn = session?.kind === "live" && phase === "playing" && !live.armed;
       $("spawn-gate").classList.toggle("hidden", !waitingFirstSpawn);
-      const out = mode === "ghost" || ((mode === "toPlant" || mode === "joining") && plantedOnce);
-      $("respawn-hint").classList.toggle("hidden", !(phase === "playing" && out));
+      const out = phase === "playing" && (mode === "ghost" || ((mode === "toPlant" || mode === "joining") && plantedOnce));
+      // While you're out the snackbar stays put with where to go.
+      const el = $("snackbar");
+      if (out && !deadShown) {
+        deadShown = true;
+        window.clearTimeout(snackTimer);
+        el.textContent = DEAD_TEXT;
+        el.className = "snackbar dead";
+      } else if (!out && deadShown) {
+        deadShown = false;
+        el.className = "snackbar hidden";
+      }
     }
 
     if (screen === "results" && s) {
       const ranked = [...s.seats].sort((a, b) => b.areaM2 - a.areaM2);
       $("results-list").innerHTML = ranked
-        .slice(0, 3)
         .map((x, i) => rowHtml(x, i, me, formatArea(x.areaM2)))
         .join("");
       const rank = s.you ? ranked.findIndex((x) => x.id === s.you!.id) + 1 : 0;
@@ -848,7 +875,7 @@ async function main() {
       if (document.activeElement !== nameInput) nameInput.value = profile.name;
       nameInput.readOnly = guest;
       if (guest) saveNameBtn.disabled = true;
-      $("name-hint").textContent = guest ? "Guests get a random name. Sign in with Google to change it." : "";
+      $("name-hint").textContent = guest ? "Guests get a random name. Sign in to change it." : "";
       $("privacy-warning").classList.toggle("hidden", profile.useLocation);
       document.querySelectorAll<HTMLElement>("[data-mode]").forEach((el) => {
         const on = el.dataset.mode === profile.mode;

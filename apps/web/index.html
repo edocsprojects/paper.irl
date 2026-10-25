@@ -126,13 +126,7 @@
           </div>
           <button class="btn primary big" type="button" id="btn-create">Create game</button>
           <button class="btn big" type="button" id="btn-join">Join game</button>
-          <button class="event-card" type="button" id="btn-events">
-            <span class="event-card-text">
-              <strong>Community Events</strong>
-              <span>Keller Hall · 7-day event</span>
-            </span>
-            <span class="event-card-go" aria-hidden="true">›</span>
-          </button>
+          <button class="btn big events-btn" type="button" id="btn-events">Community Events</button>
         </div>
       </section>
 
@@ -200,10 +194,26 @@
         <button class="btn primary big" type="button" id="btn-lobby-start">Start</button>
       </section>
 
+      <!-- Community events list -->
+      <section class="screen" data-screen="events" hidden>
+        <header class="bar">
+          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
+          <h2 class="bar-title">Community Events</h2>
+          <span class="icon-btn ghost"></span>
+        </header>
+        <div class="panel location-list">
+          <button class="place" type="button" id="event-keller">
+            <span class="place-name">Keller Hall · UMN</span>
+            <span class="place-sub">200 Union St SE · 7-day event · 1,640 ft zone</span>
+          </button>
+          <p class="hint center">More events coming soon</p>
+        </div>
+      </section>
+
       <!-- Community event: Keller Hall (teammate's event screen) -->
       <section class="screen" data-screen="event" hidden>
         <header class="bar">
-          <button class="icon-btn" type="button" data-go="home" aria-label="Back">‹</button>
+          <button class="icon-btn" type="button" data-go="events" aria-label="Back">‹</button>
           <div class="chips">
             <span class="chip">
               <span class="chip-label">Your Score</span>
@@ -239,7 +249,6 @@
           </div>
         </div>
         <div class="kill-feed" id="kill-feed" aria-live="polite"></div>
-        <div class="respawn-hint hidden" id="respawn-hint">Respawn — head to your ring</div>
         <div class="snackbar hidden" id="snackbar" role="status" aria-live="polite"></div>
         <div class="countdown hidden" id="countdown"></div>
         <div class="spawn-gate hidden" id="spawn-gate">
@@ -259,7 +268,7 @@
           <h2 class="bar-title">Lobby ended</h2>
           <span class="icon-btn ghost"></span>
         </header>
-        <p class="section-label">Top 3</p>
+        <p class="section-label">Leaderboard</p>
         <ol class="rank-list" id="results-list"></ol>
         <div class="split">
           <div class="tile"><span class="tile-label">Your score</span><strong id="results-score">0 ft²</strong></div>
