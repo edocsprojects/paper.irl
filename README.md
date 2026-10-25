@@ -48,7 +48,9 @@ In Xcode: pick an **iPhone Simulator** → **Run** (▶). Free **Personal Team**
 
 CLI: `pnpm mobile:ios` / `pnpm mobile:ios:join-bots` / `pnpm mobile:ios:host-bots` (same three modes; Simulator API default `http://127.0.0.1:3001`).
 
-After pull (Metro / pnpm): `git pull && pnpm install && pnpm mobile:ios:host-bots` (with `pnpm dev:server` already running).
+After pull (Metro / pnpm):  
+`git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline`  
+then `rm -rf node_modules apps/mobile/.expo && pnpm install && pnpm --filter @paper-irl/mobile verify:bundle && pnpm mobile:ios:host-bots` (with `pnpm dev:server` already running).
 
 Full Mac steps: [`apps/mobile/README.md`](apps/mobile/README.md).
 

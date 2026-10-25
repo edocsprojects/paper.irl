@@ -38,15 +38,25 @@ Cloud agents cannot run Xcode. Do this on your Mac. A **free Apple ID / Personal
 3. Install **CocoaPods**: `sudo gem install cocoapods` (or `brew install cocoapods`)
 4. Node **20+** and pnpm: `corepack enable`
 
-### After pulling this branch (Metro)
+### After pulling this branch (Metro / iOS entry)
 
-pnpm nests `expo` so default `expo/AppEntry` can’t see `../../App`. Entry is local `index.js` → `./App`. `@babel/runtime` is a direct dep + hoisted via `.npmrc`.
+Under pnpm, `.expo/.virtual-metro-entry` still lands on `expo/AppEntry` (`../../App` breaks). Fix:
+
+- `package.json` `"main": "index.js"` + local `index.js` → `./App`
+- iOS `AppDelegate` DEBUG root = `index` (not virtual-metro-entry)
+- `ios/.xcode.env` `ENTRY_FILE=index.js`
+- `@babel/runtime` direct dep + `.npmrc` hoist
+
+**Verify you have the fix, then clean install:**
 
 ```bash
-git pull && pnpm install && pnpm mobile:ios:host-bots
+git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline
+rm -rf node_modules apps/mobile/node_modules apps/mobile/.expo apps/mobile/.verify-export
+pnpm install && pnpm --filter @paper-irl/rules build
+pnpm --filter @paper-irl/mobile verify:bundle   # Linux-safe; must PASS
+pnpm dev:server                                 # other terminal
+pnpm mobile:ios:host-bots
 ```
-
-(with `pnpm --filter @paper-irl/rules build` once, and `pnpm dev:server` in another terminal)
 
 ### Open in Xcode and Run (Simulator)
 

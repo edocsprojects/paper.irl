@@ -24,7 +24,10 @@
 - (NSURL *)bundleURL
 {
 #if DEBUG
-  return [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@".expo/.virtual-metro-entry"];
+  // Use local index.js — NOT .expo/.virtual-metro-entry.
+  // Under pnpm, the virtual entry still resolves to expo/AppEntry.js, whose
+  // relative "../../App" import cannot see apps/mobile/App.tsx.
+  return [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@"index"];
 #else
   return [[NSBundle mainBundle] URLForResource:@"main" withExtension:@"jsbundle"];
 #endif
