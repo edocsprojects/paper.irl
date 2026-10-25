@@ -10,6 +10,9 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@babel/runtime':
+        specifier: ^7.20.0
+        version: 7.29.10
       '@paper-irl/rules':
         specifier: workspace:*
         version: link:../../packages/rules

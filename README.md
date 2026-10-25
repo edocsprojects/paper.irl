@@ -48,6 +48,8 @@ In Xcode: pick an **iPhone Simulator** → **Run** (▶). Free **Personal Team**
 
 CLI: `pnpm mobile:ios` / `pnpm mobile:ios:join-bots` / `pnpm mobile:ios:host-bots` (same three modes; Simulator API default `http://127.0.0.1:3001`).
 
+If Metro fails with `Unable to resolve "@babel/runtime/..."`: `pnpm install && pnpm mobile:ios:host-bots` (with `pnpm dev:server` already running).
+
 Full Mac steps: [`apps/mobile/README.md`](apps/mobile/README.md).
 
 No Google Maps key needed. Claims are freehand GPS polylines inside the lobby boundary; the basemap is a simple street map (OpenFreeMap). Camera follows Player 1 (“You”); tap anywhere on the Spawn overlay to plant / respawn while other bots keep wandering.

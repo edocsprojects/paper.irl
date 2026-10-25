@@ -17,6 +17,7 @@
     "host-bots:ios": "EXPO_PUBLIC_LAUNCH=host-bots expo run:ios"
   },
   "dependencies": {
+    "@babel/runtime": "^7.20.0",
     "@paper-irl/rules": "workspace:*",
     "expo": "~52.0.46",
     "expo-constants": "~17.0.8",
