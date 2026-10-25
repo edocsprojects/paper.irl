@@ -191,4 +191,54 @@ describe("wanderSeat", () => {
     // 2.5 × ~3 m/s × 0.2 s ≈ 1.7 m per tick — never a teleport hop.
     expect(maxStep).toBeLessThan(3);
   });
+
+  it("walks smoothly at 1× (no shaking or left-right zigzag)", () => {
+    const arena = buildArena({ radiusM: 150 });
+    const lobby = createLobby("SMOOTH", arena, { durationMs: 30 * 60_000 });
+    for (let i = 1; i <= 8; i++) joinLobby(lobby, `Bot${i}`, { bot: true });
+    const t0 = Date.UTC(2026, 7, 1);
+    startLobby(lobby, t0);
+    const rand = mulberry32(5);
+    const prev = new Map<number, { lat: number; lon: number; h: number | null }>();
+    const lastSign = new Map<number, number>();
+    let turnSum = 0;
+    let samples = 0;
+    let flips = 0;
+    for (let i = 0; i < 3 * 60 * 5; i++) {
+      const now = t0 + 200 + i * 200;
+      tickLobby(lobby, now);
+      for (const s of lobby.seats.values()) {
+        wanderSeat(lobby, s.id, rand, now);
+        const p = s.position;
+        if (!p || (s.mode !== "safe" && s.mode !== "trailing")) {
+          prev.delete(s.id);
+          continue;
+        }
+        const last = prev.get(s.id);
+        if (!last) {
+          prev.set(s.id, { lat: p.lat, lon: p.lon, h: null });
+          continue;
+        }
+        if (haversineM(last.lat, last.lon, p.lat, p.lon) <= 0.05) continue;
+        const h = Math.atan2(p.lat - last.lat, (p.lon - last.lon) * Math.cos((p.lat * Math.PI) / 180));
+        if (last.h !== null) {
+          let d = h - last.h;
+          while (d > Math.PI) d -= 2 * Math.PI;
+          while (d < -Math.PI) d += 2 * Math.PI;
+          turnSum += Math.abs(d);
+          samples++;
+          if (Math.abs(d) > 0.1) {
+            if (lastSign.get(s.id) === -Math.sign(d)) flips++;
+            lastSign.set(s.id, Math.sign(d));
+          }
+        }
+        prev.set(s.id, { lat: p.lat, lon: p.lon, h });
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log("smooth", { meanTurn: (turnSum / samples).toFixed(3), flips, samples });
+    expect(samples).toBeGreaterThan(3000);
+    expect(turnSum / samples).toBeLessThan(0.15);
+    expect(flips / samples).toBeLessThan(0.08);
+  });
 });

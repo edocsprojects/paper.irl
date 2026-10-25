@@ -38,7 +38,7 @@ Use **Real GPS** mode to play outside: Create puts you in a lobby with a 6-lette
 - **Trail**: leaving your land draws a trail (dashed line in your colour).
 - **Claim**: walking back into your land fills **everything the loop encloses** (real polygons, not a convex hull) and takes that ground from whoever held it. Lose all your land → you're eliminated.
 - **Cut**: touching (≈4 m, or stepping across) **anyone's** open trail eliminates its owner — even from inside your own land. Crossing your own trail is allowed.
-- **Bots** move like people: they walk around blocks along a street grid (straight legs, corners), each at their own pace, slow down at turns, pause now and then, and report slightly drifting GPS fixes.
+- **Bots** move like people: they walk around blocks along a street grid (straight legs, corners), each at their own pace, ease off through turns and pause now and then.
 - **Death**: your land goes neutral and you're out for 3 s. A **respawn ring** appears ~2 radii from where you fell; walk into it and you're back in. While you're out the snackbar says to head back to your spawn area.
 - Units in the UI are imperial (ft / ft²); the rules and server work in metres.
 
