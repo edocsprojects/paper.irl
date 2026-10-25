@@ -173,10 +173,14 @@
         </div>
         <div class="home-actions">
           <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
-          <div class="return-game hidden" id="return-game">
-            <span>Game in progress</span>
-            <button class="btn primary" type="button" id="btn-return">Back to game</button>
-          </div>
+          <button class="return-game hidden" type="button" id="return-game">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span class="return-text">
+              <strong>Game in progress</strong>
+              <span id="return-sub">Tap to return</span>
+            </span>
+            <span class="return-go" aria-hidden="true">›</span>
+          </button>
           <button class="btn primary big" type="button" id="btn-create">Create game</button>
           <button class="btn big" type="button" id="btn-join">Join game</button>
           <button class="btn big events-btn" type="button" id="btn-events">Community Events</button>
