@@ -2,7 +2,9 @@ import { useCallback, useEffect, useReducer } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View } from "react-native";
 import { GameScreen } from "./src/screens/GameScreen";
-import { LobbyScreen } from "./src/screens/LobbyScreen";
+import { HomeScreen } from "./src/screens/HomeScreen";
+import { CreateSetupScreen } from "./src/screens/CreateSetupScreen";
+import { JoinScreen } from "./src/screens/JoinScreen";
 import { LoadingScreen } from "./src/screens/LoadingScreen";
 import { ErrorRecovery } from "./src/screens/ErrorRecovery";
 import { api } from "./src/lib/api";
@@ -21,40 +23,75 @@ export default function App() {
     dispatch({ type: "BOOT_DONE" });
   }, []);
 
-  // Warm health check during cold start (non-blocking).
   useEffect(() => {
     api.health().catch(() => undefined);
   }, []);
+
+  function beginCountdown(session: Session, lobby: LobbyPayload) {
+    dispatch({ type: "SESSION_READY", session, lobby });
+    dispatch({ type: "COUNTDOWN", n: 3 });
+  }
+
+  const playScreens = new Set([
+    "lobby_card",
+    "countdown",
+    "match_starting",
+    "playing",
+    "death_respawn",
+    "results",
+    "rematch_waiting",
+  ]);
 
   return (
     <View style={styles.root}>
       <StatusBar style={state.screen === "cold_start" ? "light" : "dark"} />
 
-      {state.screen === "cold_start" && (
-        <LoadingScreen onDone={onBootDone} />
-      )}
+      {state.screen === "cold_start" && <LoadingScreen onDone={onBootDone} />}
 
       {state.screen === "home" && (
-        <LobbyScreen
-          busy={state.connecting}
-          onBusy={(v) => dispatch({ type: "SET_CONNECTING", connecting: v })}
-          onReady={(session: Session, lobby: LobbyPayload) =>
-            dispatch({ type: "SESSION_READY", session, lobby })
-          }
-          onFail={(error) => dispatch({ type: "FAIL", error })}
+        <HomeScreen
+          onCreate={() => dispatch({ type: "OPEN_CREATE" })}
+          onJoin={() => dispatch({ type: "OPEN_JOIN" })}
         />
       )}
 
-      {state.session &&
-        state.screen !== "cold_start" &&
-        state.screen !== "home" &&
-        state.screen !== "error" && (
-          <GameScreen
-            state={state}
-            session={state.session}
-            dispatch={dispatch}
-          />
-        )}
+      {state.screen === "create_setup" && (
+        <CreateSetupScreen
+          busy={state.connecting}
+          onBusy={(v) => dispatch({ type: "SET_CONNECTING", connecting: v })}
+          session={state.session}
+          lobby={state.lobby}
+          onSession={(session, lobby) =>
+            dispatch({ type: "SESSION_READY", session, lobby })
+          }
+          onStarted={beginCountdown}
+          onFail={(error) => dispatch({ type: "FAIL", error })}
+          onBack={() => dispatch({ type: "EXIT_HOME" })}
+        />
+      )}
+
+      {state.screen === "join" && (
+        <JoinScreen
+          busy={state.connecting}
+          onBusy={(v) => dispatch({ type: "SET_CONNECTING", connecting: v })}
+          onJoined={(session, lobby) => {
+            dispatch({ type: "SESSION_READY", session, lobby });
+            if (lobby.phase === "live") {
+              dispatch({ type: "COUNTDOWN", n: 3 });
+            }
+          }}
+          onFail={(error) => dispatch({ type: "FAIL", error })}
+          onBack={() => dispatch({ type: "EXIT_HOME" })}
+        />
+      )}
+
+      {state.session && playScreens.has(state.screen) && (
+        <GameScreen
+          state={state}
+          session={state.session}
+          dispatch={dispatch}
+        />
+      )}
 
       <ErrorRecovery
         active={state.screen === "error"}

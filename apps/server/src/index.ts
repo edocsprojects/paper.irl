@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import {
   applyFix,
+  buildArena,
   buildKellerArena,
   createLobby,
   joinLobby,
@@ -23,16 +24,14 @@ import { fillBots, startBotLoop, stopBotLoop, tickBots } from "./bots.js";
  * Live play state is in-memory. Postgres is optional (DATABASE_URL).
  * Freeplay MVP: GPS polylines inside Keller circle (no path-graph required).
  */
-const arena = buildKellerArena();
+const defaultArena = buildKellerArena();
 const lobbies = new Map<string, LobbyState>();
 
+/** Fixed test lobby code so Create/Join always match on Simulator. */
+const DEMO_LOBBY_CODE = "ABC123";
+
 function code() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "KELL-";
-  for (let i = 0; i < 4; i++) {
-    s += alphabet[Math.floor(Math.random() * alphabet.length)]!;
-  }
-  return s;
+  return DEMO_LOBBY_CODE;
 }
 
 function lobbyPayload(lobby: LobbyState) {
@@ -99,27 +98,63 @@ async function main() {
   app.get("/health", async () => ({
     ok: true,
     mode: "freeplay",
-    arena: arena.id,
-    radiusM: arena.radiusM,
-    center: { lat: arena.centerLat, lon: arena.centerLon },
+    arena: defaultArena.id,
+    radiusM: defaultArena.radiusM,
+    center: { lat: defaultArena.centerLat, lon: defaultArena.centerLon },
   }));
 
   app.post<{
-    Body: { durationMs?: number };
+    Body: {
+      durationMs?: number;
+      maxSeats?: number;
+      radiusM?: number;
+      centerLat?: number;
+      centerLon?: number;
+    };
   }>("/lobbies", async (req) => {
     const c = code();
-    const lobby = createLobby(c, arena, {
+    stopBotLoop(c);
+    const maxSeats = Math.max(
+      2,
+      Math.min(8, Math.round(req.body?.maxSeats ?? 8)),
+    );
+    const radiusM = Math.max(
+      50,
+      Math.min(5000, Math.round(req.body?.radiusM ?? 500)),
+    );
+    const centerLat =
+      typeof req.body?.centerLat === "number"
+        ? req.body.centerLat
+        : defaultArena.centerLat;
+    const centerLon =
+      typeof req.body?.centerLon === "number"
+        ? req.body.centerLon
+        : defaultArena.centerLon;
+    const playArena = buildArena({ radiusM, centerLat, centerLon });
+    const lobby = createLobby(c, playArena, {
       durationMs: req.body?.durationMs ?? 15 * 60 * 1000,
+      maxSeats,
     });
     lobbies.set(c, lobby);
     if (db) {
       await db.query(
         `INSERT INTO lobbies(code, duration_ms, phase) VALUES ($1,$2,$3)
-         ON CONFLICT (code) DO NOTHING`,
+         ON CONFLICT (code) DO UPDATE SET duration_ms=$2, phase=$3`,
         [c, lobby.durationMs, lobby.phase],
       );
     }
-    return { code: c, phase: lobby.phase, maxSeats: lobby.maxSeats, mode: "freeplay" };
+    return {
+      code: c,
+      phase: lobby.phase,
+      maxSeats: lobby.maxSeats,
+      mode: "freeplay",
+      arena: {
+        id: playArena.id,
+        centerLat: playArena.centerLat,
+        centerLon: playArena.centerLon,
+        radiusM: playArena.radiusM,
+      },
+    };
   });
 
   app.post<{
@@ -287,7 +322,7 @@ async function main() {
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen({ port, host: "0.0.0.0" });
-  console.log(`paper.irl server on :${port} mode=freeplay arena=${arena.id}`);
+  console.log(`paper.irl server on :${port} mode=freeplay arena=${defaultArena.id}`);
 }
 
 main().catch((err) => {

@@ -1,14 +1,17 @@
 # paper.irl — mobile (Expo)
 
-React Native (Expo) client sharing `@paper-irl/rules`. **Android** + **iOS** (native `ios/` for Xcode). Street map via MapLibre in a WebView (OpenFreeMap — **no Google Maps key**).
+React Native (Expo) client sharing `@paper-irl/rules`. **Android** + **iOS** (native `ios/` for Xcode).
 
-## Launch modes (one app, both platforms)
+**Play view:** plain RN arena (lat/lon → local meters, camera locked to you, lerped positions). **No MapLibre / WebView map.**
 
-| Root script | Mode | Behavior |
-|---|---|---|
-| `pnpm mobile` / `pnpm mobile:ios` | `human` | Create/join lobby; real GPS when permitted; mock autopilot if GPS denied (simulator) |
-| `pnpm mobile:join-bots` / `pnpm mobile:ios:join-bots` | `join-bots` | Join (or create) a lobby with 7 bots; **your seat is auto-moved** like the sim |
-| `pnpm mobile:host-bots` / `pnpm mobile:ios:host-bots` | `host-bots` | Create lobby, fill 7 bots, start; your seat auto-moved for demo footage |
+**Lobby UX:** Home → Create (one setup: GPS lat/lon, radius, max, Start) or Join (`ABC123`). Start fills bots + **3-2-1** countdown. Brand text is exactly `paper.irl`.
+
+## Scripts
+
+| Root script | Notes |
+|---|---|
+| `pnpm mobile` / `pnpm mobile:ios` | Human GPS when permitted; autopilot if denied |
+| `pnpm mobile:ios:host-bots` | Same app; useful for Simulator footage |
 
 Always start the API first (`pnpm dev:server`).
 
@@ -22,6 +25,14 @@ Default API URL (override with `EXPO_PUBLIC_API_URL`):
 
 ---
 
+## Fast Refresh
+
+JS/TS under `apps/mobile` (screens, arena, HUD) updates via Metro Fast Refresh — **save and Simulator updates**. No Xcode/Pods restart.
+
+Rebuild native only when you change `ios/`, Podfile, native modules, or app.json plugins. Do **not** `rm -rf node_modules` on every run.
+
+---
+
 ## Metro monorepo (required reading)
 
 Expo’s Metro **server root is the monorepo root**. AppDelegate must use:
@@ -30,49 +41,33 @@ Expo’s Metro **server root is the monorepo root**. AppDelegate must use:
 jsBundleURLForBundleRoot:@".expo/.virtual-metro-entry"
 ```
 
-Expo rewrites that to `apps/mobile/index` (from `"main": "index.js"`).  
-**Do not** use `@"index"` — Metro looks for `<repo>/index.js` and redboxes.
-
-Also: `.npmrc` `node-linker=hoisted`, `ios/.xcode.env` `ENTRY_FILE=index.js`, local `index.js` → `registerRootComponent(App)`.
-
-### Linux gate (runs in cloud / `pnpm test`)
+### Linux gate
 
 ```bash
 pnpm verify:mobile
-# or: pnpm --filter @paper-irl/mobile verify:bundle
 ```
 
-Catches: `@babel/runtime`, `expo/AppEntry` `../../App`, bare `./index` from repo root, stale `.pnpm` symlinks / autolinking paths, and (on macOS) `Podfile.lock` / `Pods` still pointing at `node_modules/.pnpm`. HTTP-probes virtual-metro-entry, `/apps/mobile/index.bundle`, and bare `/index.bundle` with Metro launched exactly like `pnpm mobile:ios:host-bots` (repo root + `pnpm --filter`).
+### Stale native build
 
-`metro.config.js` also rewrites bare `/index.bundle` → `/apps/mobile/index.bundle`, so an old Simulator binary that still asks for `index` gets the app instead of the `./index` redbox.
-
-### Stale native build (xcodebuild 65 / `ExpoModulesCore` pcm / `.pnpm/expo-modules-core@…`)
-
-Pods + DerivedData built before `node-linker=hoisted` reference `node_modules/.pnpm/...` paths that no longer exist. The build fails, the **old** app stays on the Simulator, and it redboxes on `./index`. Fix:
+Only if AST/Pods/pcm break:
 
 ```bash
-pnpm mobile:ios:clean   # rm ios/Pods, Podfile.lock, ios/build, DerivedData/paperirl-*, uninstall irl.paper.demo
+pnpm mobile:ios:clean
 ```
 
 ---
 
-## iOS / Xcode (Mac) — after `pnpm verify:mobile` is green
-
-Free Apple **Personal Team** is enough for **Simulator**. Paid **$99/yr** only for TestFlight / broader device distribution.
+## iOS Simulator (Mac) — after `pnpm verify:mobile` is green
 
 ### Terminal 1 — API
 
-Default (no `rm -rf node_modules`, no `ios:clean` every run):
-
 ```bash
-git fetch && git checkout <branch> && git pull
+git fetch && git checkout cursor/mobile-lobby-ui-8b8c && git pull
 pnpm install
 pnpm --filter @paper-irl/rules build
 pnpm verify:mobile
 pnpm dev:server
 ```
-
-Only after pnpm/Metro/Pods path breakage: wipe `node_modules` / `.expo`, then `pnpm install` again. Only if AST/Pods/pcm break: `pnpm mobile:ios:clean` before rebuild.
 
 ### Terminal 2 — iOS
 
@@ -80,34 +75,8 @@ Only after pnpm/Metro/Pods path breakage: wipe `node_modules` / `.expo`, then `p
 pnpm mobile:ios:host-bots
 ```
 
-Or open Xcode after pods:
-
-```bash
-cd apps/mobile/ios && pod install && open paperirl.xcworkspace
-```
-
-Xcode → **paperirl** → iPhone Simulator → **Run**. If Xcode shows a pcm / `.pnpm` error, quit Xcode, run `pnpm mobile:ios:clean`, then `pod install` again.
-
-MVP play is **freeplay GPS** inside the Keller 500 m circle (shared `@paper-irl/rules` + server). Trails/territory are freehand polylines — not OSM path-graph claims. Off-boundary fixes are soft-rejected/clamped by the server.
-
 ---
 
-## Android Studio emulator
+## Data path (play)
 
-```bash
-pnpm install
-pnpm --filter @paper-irl/rules build
-pnpm dev:server          # terminal 1
-pnpm mobile:host-bots    # terminal 2
-```
-
-Same Metro stack as iOS — `pnpm verify:mobile` gates both. Browser escape hatch: `pnpm demo`.
-
-## Project layout
-
-```
-apps/mobile/          Expo app (TS) + index.js entry
-apps/mobile/ios/      Native Xcode project (open *.xcworkspace after pods)
-apps/server/          HTTP lobby + bot loop
-packages/rules/       Shared plant/trail/cut/wipe + wanderSeat
-```
+HTTP poll `GET /lobbies/:code` (~1s) + GPS/autopilot `POST` snapshots. No websocket. RN + arena skip redundant identical fingerprints; positions lerp on the client.

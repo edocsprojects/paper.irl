@@ -2,6 +2,9 @@ import { apiBase } from "./config";
 
 export type LatLon = { lat: number; lon: number };
 
+/** Fixed Simulator lobby code — Create and Join always share this. */
+export const DEMO_LOBBY_CODE = "ABC123";
+
 /** Matches server `seatPublicView` / freeplay lobby seats. */
 export type SeatView = {
   id: number;
@@ -9,15 +12,12 @@ export type SeatView = {
   mode: string;
   color: string;
   areaM2: number;
-  /** Open freehand trail (lat/lon), not graph edge ids. */
   trail: LatLon[];
-  /** Closed territory rings (lat/lon). */
   owned: LatLon[][];
   position: LatLon | null;
   respawnAt: LatLon | null;
 };
 
-/** Matches server `lobbyPayload` — freeplay GPS, no path graph. */
 export type LobbyPayload = {
   code: string;
   phase: string;
@@ -34,8 +34,15 @@ export type LobbyPayload = {
   };
   seats: SeatView[];
   top3: SeatView[];
-  /** Seats that tapped Play again (same lobby code). */
   rematchReady?: number[];
+};
+
+export type CreateLobbyOpts = {
+  durationMs?: number;
+  maxSeats?: number;
+  radiusM?: number;
+  centerLat?: number;
+  centerLon?: number;
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -71,14 +78,23 @@ export const api = {
       radiusM: number;
       center: LatLon;
     }>("/health"),
-  createLobby: (durationMs = 15 * 60 * 1000) =>
-    req<{ code: string; phase: string; maxSeats: number; mode: string }>(
-      "/lobbies",
-      {
-        method: "POST",
-        body: JSON.stringify({ durationMs }),
-      },
-    ),
+  createLobby: (opts: CreateLobbyOpts = {}) =>
+    req<{
+      code: string;
+      phase: string;
+      maxSeats: number;
+      mode: string;
+      arena: LobbyPayload["arena"];
+    }>("/lobbies", {
+      method: "POST",
+      body: JSON.stringify({
+        durationMs: opts.durationMs ?? 15 * 60 * 1000,
+        maxSeats: opts.maxSeats ?? 8,
+        radiusM: opts.radiusM ?? 500,
+        centerLat: opts.centerLat,
+        centerLon: opts.centerLon,
+      }),
+    }),
   join: (code: string, nickname: string) =>
     req<{ seat: SeatView; phase: string }>(`/lobbies/${code}/join`, {
       method: "POST",

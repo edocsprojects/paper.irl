@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AppState as RNAppState, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState as RNAppState, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import { api, type LobbyPayload } from "../lib/api";
-import { GameMap } from "../map/GameMap";
+import { ArenaView } from "../arena/ArenaView";
 import { SnackbarHost } from "../components/SnackbarHost";
+import { PlayHud } from "../components/PlayHud";
 import { colors, fonts } from "../theme/tokens";
 import {
   spawnOverlayVisible,
@@ -14,7 +15,8 @@ import {
 import { SpawnOverlay } from "./SpawnOverlay";
 import { ResultsOverlay } from "./ResultsOverlay";
 import { RematchWaiting } from "./RematchWaiting";
-import { LobbyWaiting } from "./LobbyWaiting";
+import { LobbyCardScreen } from "./LobbyCardScreen";
+import { CountdownOverlay } from "./CountdownOverlay";
 
 type Props = {
   state: AppState;
@@ -22,30 +24,57 @@ type Props = {
   dispatch: (e: AppEvent) => void;
 };
 
+function lobbyFp(lobby: LobbyPayload, youId: number): string {
+  return lobby.seats
+    .map((s) => {
+      const p = s.position ?? s.respawnAt;
+      return [
+        s.id,
+        s.mode,
+        Math.round(s.areaM2),
+        s.trail.length,
+        s.owned.length,
+        p ? `${p.lat.toFixed(5)},${p.lon.toFixed(5)}` : "",
+        s.id === youId ? "1" : "0",
+      ].join(":");
+    })
+    .join("|");
+}
+
+/**
+ * Live play shell — plain RN arena (no MapLibre).
+ * Data: HTTP poll GET /lobbies/:code ~1s + GPS/autopilot POSTs (no websocket).
+ */
 export function GameScreen({ state, session, dispatch }: Props) {
   const lobby = state.lobby;
   const auto = session.mode === "join-bots" || session.mode === "host-bots";
   const failCount = useRef(0);
+  const lastFp = useRef("");
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const you = useMemo(
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
     [lobby, session.seatId],
   );
 
-  const remainingMs = Math.max(
-    0,
-    (lobby?.endsAtMs ?? Date.now()) - Date.now(),
-  );
+  const remainingMs = Math.max(0, (lobby?.endsAtMs ?? nowMs) - nowMs);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const pushLobby = useCallback(
     (next: LobbyPayload) => {
       failCount.current = 0;
+      const fp = `${next.phase}#${lobbyFp(next, session.seatId)}`;
+      if (fp === lastFp.current) return;
+      lastFp.current = fp;
       dispatch({ type: "LOBBY", lobby: next });
     },
-    [dispatch],
+    [dispatch, session.seatId],
   );
 
-  // Poll lobby
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
@@ -67,7 +96,6 @@ export function GameScreen({ state, session, dispatch }: Props) {
     };
   }, [session.code, auto, pushLobby, dispatch]);
 
-  // App background / resume
   useEffect(() => {
     const sub = RNAppState.addEventListener("change", (next) => {
       if (next === "active") {
@@ -83,14 +111,28 @@ export function GameScreen({ state, session, dispatch }: Props) {
     return () => sub.remove();
   }, [dispatch, pushLobby, session.code]);
 
+  // Host/joiner countdown 3-2-1 then clear
+  useEffect(() => {
+    if (state.screen !== "countdown" || state.countdown == null) return;
+    if (state.countdown <= 0) {
+      dispatch({ type: "COUNTDOWN", n: null });
+      return;
+    }
+    const t = setTimeout(() => {
+      const next = state.countdown! - 1;
+      dispatch({ type: "COUNTDOWN", n: next > 0 ? next : null });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [state.screen, state.countdown, dispatch]);
+
   const needSpawn =
     lobby?.phase === "live" &&
     !!you &&
     (you.mode === "toPlant" || you.mode === "joining" || you.mode === "ghost");
 
-  // Human GPS (or mock when denied / emulator) — freeplay fix protocol
   useEffect(() => {
     if (auto || !lobby || lobby.phase !== "live" || needSpawn) return;
+    if (state.countdown != null) return;
     let sub: Location.LocationSubscription | null = null;
     let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -118,7 +160,7 @@ export function GameScreen({ state, session, dispatch }: Props) {
               });
               pushLobby(next);
             } catch {
-              /* ignore transient */
+              /* ignore */
             }
           },
         );
@@ -143,11 +185,12 @@ export function GameScreen({ state, session, dispatch }: Props) {
     session.code,
     session.seatId,
     pushLobby,
+    state.countdown,
   ]);
 
-  // Auto-pilot human seat for bot modes
   useEffect(() => {
     if (!auto || !lobby || lobby.phase !== "live") return;
+    if (state.countdown != null) return;
     const id = setInterval(() => {
       api
         .autopilot(session.code, session.seatId)
@@ -161,12 +204,19 @@ export function GameScreen({ state, session, dispatch }: Props) {
         .catch(() => undefined);
     }, 1000);
     return () => clearInterval(id);
-  }, [auto, lobby?.phase, session.code, session.seatId, pushLobby, dispatch]);
+  }, [
+    auto,
+    lobby?.phase,
+    session.code,
+    session.seatId,
+    pushLobby,
+    dispatch,
+    state.countdown,
+  ]);
 
   async function spawn() {
     if (!you?.respawnAt) return;
     try {
-      // Freeplay: plant by sending a fix at the assigned GPS marker.
       const at = you.respawnAt;
       const next = await api.fix(session.code, session.seatId, {
         lat: at.lat,
@@ -180,18 +230,9 @@ export function GameScreen({ state, session, dispatch }: Props) {
       dispatch({ type: "SPAWN_CONFIRMED" });
       dispatch({
         type: "SNACK",
-        text: "You're planted — freehand claim inside the circle",
+        text: "You're planted — claim inside the circle",
         tone: "good",
       });
-    } catch (e) {
-      dispatch({ type: "FAIL", error: String(e) });
-    }
-  }
-
-  async function startMatch() {
-    try {
-      await api.start(session.code);
-      pushLobby(await api.get(session.code));
     } catch (e) {
       dispatch({ type: "FAIL", error: String(e) });
     }
@@ -211,11 +252,7 @@ export function GameScreen({ state, session, dispatch }: Props) {
     try {
       const next = await api.rematchStart(session.code, session.seatId);
       pushLobby(next);
-      dispatch({
-        type: "SNACK",
-        text: "Rematch — plant at your marker",
-        tone: "good",
-      });
+      dispatch({ type: "COUNTDOWN", n: 3 });
     } catch (e) {
       dispatch({ type: "FAIL", error: String(e) });
     }
@@ -229,14 +266,12 @@ export function GameScreen({ state, session, dispatch }: Props) {
     );
   }
 
-  if (state.screen === "lobby_waiting" || lobby.phase === "open") {
+  if (state.screen === "lobby_card" || (lobby.phase === "open" && !session.isHost)) {
     return (
-      <LobbyWaiting
+      <LobbyCardScreen
         session={session}
         lobby={lobby}
-        onStart={startMatch}
-        onExit={() => dispatch({ type: "EXIT_HOME" })}
-        busy={state.connecting}
+        onLeave={() => dispatch({ type: "EXIT_HOME" })}
       />
     );
   }
@@ -244,35 +279,44 @@ export function GameScreen({ state, session, dispatch }: Props) {
   const showSpawn = spawnOverlayVisible(state.screen, auto);
   const showResults = state.screen === "results";
   const showRematch = state.screen === "rematch_waiting";
+  const inPlay =
+    lobby.phase === "live" ||
+    lobby.phase === "ended" ||
+    state.screen === "countdown";
+
+  if (!inPlay) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.muted}>Waiting…</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
-      <GameMap lobby={lobby} youId={session.seatId} remainingMs={remainingMs} />
+      <ArenaView lobby={lobby} youId={session.seatId} />
 
-      <View style={styles.topBar} pointerEvents="box-none">
-        <View style={styles.chip}>
-          <Text style={styles.chipText}>{lobby.code}</Text>
-        </View>
-        {!state.appActive && (
-          <View style={[styles.chip, styles.bgChip]}>
-            <Text style={styles.chipText}>Paused</Text>
-          </View>
-        )}
-        <Pressable
-          style={styles.chip}
-          onPress={() => dispatch({ type: "EXIT_HOME" })}
-        >
-          <Text style={styles.chipText}>Exit</Text>
-        </Pressable>
-      </View>
+      <PlayHud
+        code={lobby.code}
+        remainingMs={remainingMs}
+        top3={lobby.top3}
+        paused={!state.appActive}
+        onExit={() => dispatch({ type: "EXIT_HOME" })}
+      />
 
       <SnackbarHost
         snack={state.snack}
         onClear={() => dispatch({ type: "CLEAR_SNACK" })}
       />
 
+      <CountdownOverlay
+        active={state.screen === "countdown"}
+        mountKey={state.mountKey}
+        n={state.countdown}
+      />
+
       <SpawnOverlay
-        active={showSpawn}
+        active={showSpawn && state.screen !== "countdown"}
         mountKey={state.mountKey}
         wiped={state.screen === "death_respawn"}
         onSpawn={spawn}
@@ -305,23 +349,4 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.mapWash },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   muted: { color: colors.muted, fontFamily: fonts.body },
-  topBar: {
-    position: "absolute",
-    top: 48,
-    left: 12,
-    right: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  chip: {
-    backgroundColor: "rgba(255,255,255,0.94)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: colors.line,
-  },
-  bgChip: { backgroundColor: "rgba(20,20,20,0.85)" },
-  chipText: { fontFamily: fonts.ui, color: colors.ink },
 });

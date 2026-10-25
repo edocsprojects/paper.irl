@@ -1,7 +1,6 @@
 /**
  * Mobile UI state machine — screens have explicit enter/leave.
- * Gameplay rules live on the server / @paper-irl/rules; this owns UX only.
- * Freeplay protocol types match apps/mobile/src/lib/api.ts (do not regress).
+ * Freeplay protocol types match apps/mobile/src/lib/api.ts.
  */
 
 import type { LobbyPayload, SeatView } from "../lib/api";
@@ -14,15 +13,16 @@ export type Session = {
   seatId: number;
   nickname: string;
   mode: LaunchMode;
-  /** Lowest seat id in lobby at join time ≈ host for MVP. */
   isHost: boolean;
 };
 
-/** Exclusive UI screens — only one primary overlay/screen focus at a time. */
 export type UiScreen =
   | "cold_start"
   | "home"
-  | "lobby_waiting"
+  | "create_setup"
+  | "join"
+  | "lobby_card"
+  | "countdown"
   | "match_starting"
   | "playing"
   | "death_respawn"
@@ -40,16 +40,20 @@ export type AppState = {
   error: string | null;
   snack: { id: number; text: string; tone: SnackTone } | null;
   plantedOnce: boolean;
-  /** Bumps when leaving an overlay so remounts stay single. */
   mountKey: number;
   appActive: boolean;
   connecting: boolean;
+  /** 3, 2, 1 during countdown; null otherwise. */
+  countdown: number | null;
 };
 
 export type AppEvent =
   | { type: "BOOT_DONE" }
+  | { type: "OPEN_CREATE" }
+  | { type: "OPEN_JOIN" }
   | { type: "SESSION_READY"; session: Session; lobby?: LobbyPayload }
   | { type: "LOBBY"; lobby: LobbyPayload }
+  | { type: "COUNTDOWN"; n: number | null }
   | { type: "SNACK"; text: string; tone?: SnackTone }
   | { type: "CLEAR_SNACK" }
   | { type: "SPAWN_CONFIRMED" }
@@ -74,6 +78,7 @@ export function initialAppState(): AppState {
     mountKey: 0,
     appActive: true,
     connecting: false,
+    countdown: null,
   };
 }
 
@@ -87,24 +92,25 @@ function needsPlant(you: SeatView | null, phase: string | undefined): boolean {
   return you.mode === "toPlant" || you.mode === "joining" || you.mode === "ghost";
 }
 
-/** Map server lobby + seat into a play screen. Overlays never stack. */
 export function derivePlayScreen(state: AppState): UiScreen {
   const lobby = state.lobby;
   if (!lobby || !state.session) return "home";
-  if (lobby.phase === "open") return "lobby_waiting";
+  if (state.countdown != null) return "countdown";
+  if (lobby.phase === "open") {
+    return state.session.isHost ? "create_setup" : "lobby_card";
+  }
   if (lobby.phase === "ended") {
     const ready = lobby.rematchReady ?? [];
     if (ready.includes(state.session.seatId)) return "rematch_waiting";
     return "results";
   }
   if (lobby.phase === "live") {
-    const you = youOf(state);
-    if (needsPlant(you, lobby.phase)) {
+    if (needsPlant(youOf(state), lobby.phase)) {
       return state.plantedOnce ? "death_respawn" : "match_starting";
     }
     return "playing";
   }
-  return "lobby_waiting";
+  return "lobby_card";
 }
 
 function leaveOverlay(state: AppState, next: UiScreen): AppState {
@@ -118,8 +124,27 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
       if (state.screen !== "cold_start") return state;
       return leaveOverlay(state, "home");
 
+    case "OPEN_CREATE":
+      return leaveOverlay(
+        { ...state, session: null, lobby: null, countdown: null, plantedOnce: false },
+        "create_setup",
+      );
+
+    case "OPEN_JOIN":
+      return leaveOverlay(
+        { ...state, session: null, lobby: null, countdown: null, plantedOnce: false },
+        "join",
+      );
+
     case "SET_CONNECTING":
       return { ...state, connecting: event.connecting };
+
+    case "COUNTDOWN":
+      if (event.n == null) {
+        const next = { ...state, countdown: null };
+        return leaveOverlay(next, derivePlayScreen(next));
+      }
+      return leaveOverlay({ ...state, countdown: event.n }, "countdown");
 
     case "SESSION_READY": {
       const next: AppState = {
@@ -136,12 +161,25 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
     case "LOBBY": {
       const next: AppState = { ...state, lobby: event.lobby, error: null };
       if (!next.session) return next;
+      if (state.countdown != null) {
+        return { ...next, screen: "countdown" };
+      }
       if (state.screen === "rematch_waiting" && event.lobby.phase === "ended") {
         return { ...next, screen: "rematch_waiting" };
       }
-      // Rematch restart: clear plantedOnce when returning to match_starting.
       if (event.lobby.phase === "live" && state.lobby?.phase === "ended") {
         next.plantedOnce = false;
+      }
+      // Joiner: open → live means host started — enter countdown if not already
+      if (
+        event.lobby.phase === "live" &&
+        state.lobby?.phase === "open" &&
+        next.session &&
+        !next.session.isHost &&
+        state.countdown == null &&
+        state.screen !== "countdown"
+      ) {
+        return leaveOverlay({ ...next, countdown: 3 }, "countdown");
       }
       const derived = derivePlayScreen(next);
       if (derived === state.screen) return next;
@@ -153,12 +191,8 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
       return leaveOverlay(next, derivePlayScreen(next));
     }
 
-    case "PLAY_AGAIN_READY": {
-      if (state.screen !== "results" && state.screen !== "rematch_waiting") {
-        return state;
-      }
+    case "PLAY_AGAIN_READY":
       return leaveOverlay(state, "rematch_waiting");
-    }
 
     case "EXIT_HOME":
       return leaveOverlay(
@@ -169,6 +203,7 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
           plantedOnce: false,
           error: null,
           snack: null,
+          countdown: null,
         },
         "home",
       );
