@@ -1,19 +1,68 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { BrandMark } from "../components/BrandMark";
 import { formatLatLon } from "../arena/geoProject";
+import { api } from "../lib/api";
 import { colors, fonts } from "../theme/tokens";
 import type { LobbyPayload, Session } from "../state/appMachine";
 
 type Props = {
   session: Session;
   lobby: LobbyPayload;
+  busy?: boolean;
+  onLobby: (lobby: LobbyPayload) => void;
+  onStarted: (lobby: LobbyPayload) => void;
+  onFail: (error: string) => void;
   onLeave: () => void;
+  setBusy?: (v: boolean) => void;
 };
 
-/** Shared lobby facts for joiners — same lat/lon, radius, max, spots as host. */
-export function LobbyCardScreen({ session, lobby, onLeave }: Props) {
+/** Shared lobby card — lat/lon, radius, max, spots, code. Host has Start. */
+export function LobbyCardScreen({
+  session,
+  lobby,
+  busy,
+  onLobby,
+  onStarted,
+  onFail,
+  onLeave,
+  setBusy,
+}: Props) {
   const seats = lobby.seats;
   const slots = Array.from({ length: lobby.maxSeats }, (_, i) => seats[i] ?? null);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      api
+        .get(session.code)
+        .then(onLobby)
+        .catch(() => undefined);
+    }, 1200);
+    return () => clearInterval(id);
+  }, [session.code, onLobby]);
+
+  async function start() {
+    setBusy?.(true);
+    try {
+      // Lobby must already be open (Create did that). Only start here.
+      const started = await api.start(session.code);
+      if (started.phase !== "live") {
+        throw new Error("bad_phase");
+      }
+      const next = await api.get(session.code);
+      onStarted(next);
+    } catch (e) {
+      onFail(String(e));
+    } finally {
+      setBusy?.(false);
+    }
+  }
 
   return (
     <View style={styles.root}>
@@ -52,7 +101,21 @@ export function LobbyCardScreen({ session, lobby, onLeave }: Props) {
         ),
       )}
 
-      <Text style={styles.hint}>Waiting for host to Start…</Text>
+      {session.isHost ? (
+        <Pressable
+          style={[styles.btn, busy && styles.btnDisabled]}
+          disabled={busy}
+          onPress={start}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.btnText}>Start</Text>
+          )}
+        </Pressable>
+      ) : (
+        <Text style={styles.hint}>Waiting for host to Start…</Text>
+      )}
     </View>
   );
 }
@@ -63,6 +126,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.mapWash,
     paddingHorizontal: 24,
     paddingTop: 56,
+    paddingBottom: 28,
   },
   top: {
     flexDirection: "row",
@@ -75,6 +139,7 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontFamily: fonts.ui,
     letterSpacing: 1,
+    fontSize: 16,
   },
   coords: {
     marginTop: 8,
@@ -109,6 +174,15 @@ const styles = StyleSheet.create({
   dotEmpty: { backgroundColor: "rgba(20,20,20,0.15)" },
   name: { fontFamily: fonts.ui, color: colors.ink, fontSize: 16 },
   empty: { fontFamily: fonts.body, color: colors.muted },
+  btn: {
+    marginTop: 28,
+    backgroundColor: colors.accent,
+    borderRadius: 4,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  btnDisabled: { opacity: 0.6 },
+  btnText: { color: "#fff", fontFamily: fonts.ui, fontSize: 18 },
   hint: {
     marginTop: 32,
     textAlign: "center",

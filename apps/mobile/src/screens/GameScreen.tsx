@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState as RNAppState, StyleSheet, Text, View } from "react-native";
-import * as Location from "expo-location";
-import { api, type LobbyPayload } from "../lib/api";
-import { ArenaView } from "../arena/ArenaView";
+import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
+import { GameMap, mapFingerprint } from "../map/GameMap";
 import { SnackbarHost } from "../components/SnackbarHost";
 import { PlayHud } from "../components/PlayHud";
 import { colors, fonts } from "../theme/tokens";
@@ -22,35 +21,25 @@ type Props = {
   state: AppState;
   session: Session;
   dispatch: (e: AppEvent) => void;
+  onHostStarted: (lobby: LobbyPayload) => void;
 };
 
-function lobbyFp(lobby: LobbyPayload, youId: number): string {
-  return lobby.seats
-    .map((s) => {
-      const p = s.position ?? s.respawnAt;
-      return [
-        s.id,
-        s.mode,
-        Math.round(s.areaM2),
-        s.trail.length,
-        s.owned.length,
-        p ? `${p.lat.toFixed(5)},${p.lon.toFixed(5)}` : "",
-        s.id === youId ? "1" : "0",
-      ].join(":");
-    })
-    .join("|");
-}
-
 /**
- * Live play shell — plain RN arena (no MapLibre).
- * Data: HTTP poll GET /lobbies/:code ~1s + GPS/autopilot POSTs (no websocket).
+ * Live play shell — street MapLibre basemap (labels/watermark stripped).
+ * Data: HTTP poll GET /lobbies/:code ~1s + autopilot/fix POSTs (no websocket).
+ * Testing build hardcodes Keller lat/lon (no Simulator GPS).
  */
-export function GameScreen({ state, session, dispatch }: Props) {
+export function GameScreen({
+  state,
+  session,
+  dispatch,
+  onHostStarted,
+}: Props) {
   const lobby = state.lobby;
-  const auto = session.mode === "join-bots" || session.mode === "host-bots";
   const failCount = useRef(0);
   const lastFp = useRef("");
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [startBusy, setStartBusy] = useState(false);
 
   const you = useMemo(
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
@@ -67,7 +56,7 @@ export function GameScreen({ state, session, dispatch }: Props) {
   const pushLobby = useCallback(
     (next: LobbyPayload) => {
       failCount.current = 0;
-      const fp = `${next.phase}#${lobbyFp(next, session.seatId)}`;
+      const fp = `${next.phase}#${mapFingerprint(next, session.seatId)}`;
       if (fp === lastFp.current) return;
       lastFp.current = fp;
       dispatch({ type: "LOBBY", lobby: next });
@@ -89,12 +78,12 @@ export function GameScreen({ state, session, dispatch }: Props) {
       }
     }
     refresh();
-    const id = setInterval(refresh, auto ? 1500 : 1000);
+    const id = setInterval(refresh, 1000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [session.code, auto, pushLobby, dispatch]);
+  }, [session.code, pushLobby, dispatch]);
 
   useEffect(() => {
     const sub = RNAppState.addEventListener("change", (next) => {
@@ -111,7 +100,6 @@ export function GameScreen({ state, session, dispatch }: Props) {
     return () => sub.remove();
   }, [dispatch, pushLobby, session.code]);
 
-  // Host/joiner countdown 3-2-1 then clear
   useEffect(() => {
     if (state.screen !== "countdown" || state.countdown == null) return;
     if (state.countdown <= 0) {
@@ -125,71 +113,9 @@ export function GameScreen({ state, session, dispatch }: Props) {
     return () => clearTimeout(t);
   }, [state.screen, state.countdown, dispatch]);
 
-  const needSpawn =
-    lobby?.phase === "live" &&
-    !!you &&
-    (you.mode === "toPlant" || you.mode === "joining" || you.mode === "ghost");
-
+  // Testing build: drive seat via autopilot inside Keller arena (hardcoded location).
   useEffect(() => {
-    if (auto || !lobby || lobby.phase !== "live" || needSpawn) return;
-    if (state.countdown != null) return;
-    let sub: Location.LocationSubscription | null = null;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    (async () => {
-      const perm = await Location.requestForegroundPermissionsAsync();
-      if (perm.status === "granted") {
-        sub = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.Balanced,
-            timeInterval: 1000,
-            distanceInterval: 2,
-          },
-          async (pos) => {
-            try {
-              const next = await api.fix(session.code, session.seatId, {
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-                accuracyM: pos.coords.accuracy ?? 10,
-                speedMps:
-                  pos.coords.speed && pos.coords.speed > 0
-                    ? pos.coords.speed
-                    : 1.5,
-                clientTsMs: Date.now(),
-                mock: false,
-              });
-              pushLobby(next);
-            } catch {
-              /* ignore */
-            }
-          },
-        );
-      } else {
-        timer = setInterval(() => {
-          api
-            .autopilot(session.code, session.seatId)
-            .then(pushLobby)
-            .catch(() => undefined);
-        }, 1000);
-      }
-    })();
-
-    return () => {
-      sub?.remove();
-      if (timer) clearInterval(timer);
-    };
-  }, [
-    auto,
-    lobby?.phase,
-    needSpawn,
-    session.code,
-    session.seatId,
-    pushLobby,
-    state.countdown,
-  ]);
-
-  useEffect(() => {
-    if (!auto || !lobby || lobby.phase !== "live") return;
+    if (!lobby || lobby.phase !== "live") return;
     if (state.countdown != null) return;
     const id = setInterval(() => {
       api
@@ -205,7 +131,6 @@ export function GameScreen({ state, session, dispatch }: Props) {
     }, 1000);
     return () => clearInterval(id);
   }, [
-    auto,
     lobby?.phase,
     session.code,
     session.seatId,
@@ -215,7 +140,24 @@ export function GameScreen({ state, session, dispatch }: Props) {
   ]);
 
   async function spawn() {
-    if (!you?.respawnAt) return;
+    if (!you?.respawnAt) {
+      // Fallback plant near hardcoded test location if marker missing.
+      try {
+        const next = await api.fix(session.code, session.seatId, {
+          lat: TEST_LOCATION.lat,
+          lon: TEST_LOCATION.lon,
+          accuracyM: 5,
+          speedMps: 0,
+          clientTsMs: Date.now(),
+          mock: true,
+        });
+        pushLobby(next);
+        dispatch({ type: "SPAWN_CONFIRMED" });
+      } catch (e) {
+        dispatch({ type: "FAIL", error: String(e) });
+      }
+      return;
+    }
     try {
       const at = you.respawnAt;
       const next = await api.fix(session.code, session.seatId, {
@@ -266,35 +208,28 @@ export function GameScreen({ state, session, dispatch }: Props) {
     );
   }
 
-  if (state.screen === "lobby_card" || (lobby.phase === "open" && !session.isHost)) {
+  if (state.screen === "lobby_card" || lobby.phase === "open") {
     return (
       <LobbyCardScreen
         session={session}
         lobby={lobby}
+        busy={startBusy}
+        setBusy={setStartBusy}
+        onLobby={pushLobby}
+        onStarted={onHostStarted}
+        onFail={(error) => dispatch({ type: "FAIL", error })}
         onLeave={() => dispatch({ type: "EXIT_HOME" })}
       />
     );
   }
 
-  const showSpawn = spawnOverlayVisible(state.screen, auto);
+  const showSpawn = spawnOverlayVisible(state.screen, false);
   const showResults = state.screen === "results";
   const showRematch = state.screen === "rematch_waiting";
-  const inPlay =
-    lobby.phase === "live" ||
-    lobby.phase === "ended" ||
-    state.screen === "countdown";
-
-  if (!inPlay) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.muted}>Waiting…</Text>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.root}>
-      <ArenaView lobby={lobby} youId={session.seatId} />
+      <GameMap lobby={lobby} youId={session.seatId} />
 
       <PlayHud
         code={lobby.code}

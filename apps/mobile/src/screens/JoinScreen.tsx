@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { BrandMark } from "../components/BrandMark";
 import { LinearishBg } from "../components/LinearishBg";
-import { api, DEMO_LOBBY_CODE, type LobbyPayload } from "../lib/api";
+import { api, type LobbyPayload } from "../lib/api";
 import { colors, fonts } from "../theme/tokens";
 import type { Session } from "../state/appMachine";
 
@@ -29,12 +29,13 @@ export function JoinScreen({
   onBack,
 }: Props) {
   const [nickname, setNickname] = useState("You");
-  const [code, setCode] = useState(DEMO_LOBBY_CODE);
+  const [code, setCode] = useState("");
 
   async function join() {
     onBusy(true);
     try {
-      const lobbyCode = (code.trim() || DEMO_LOBBY_CODE).toUpperCase();
+      const lobbyCode = code.trim().toUpperCase();
+      if (lobbyCode.length < 4) throw new Error("Enter the lobby code");
       const joined = await api.join(lobbyCode, nickname.trim() || "You");
       const lobby = await api.get(lobbyCode);
       const hostId = Math.min(...lobby.seats.map((s) => s.id));
@@ -66,7 +67,7 @@ export function JoinScreen({
       </View>
 
       <Text style={styles.title}>Join</Text>
-      <Text style={styles.copy}>Enter the lobby code from your host.</Text>
+      <Text style={styles.copy}>Enter the 6-character code from your host.</Text>
 
       <Text style={styles.label}>Nickname</Text>
       <TextInput
@@ -83,8 +84,9 @@ export function JoinScreen({
         value={code}
         onChangeText={setCode}
         autoCapitalize="characters"
-        placeholder={DEMO_LOBBY_CODE}
+        placeholder="XXXXXX"
         placeholderTextColor={colors.muted}
+        maxLength={6}
       />
 
       <Pressable

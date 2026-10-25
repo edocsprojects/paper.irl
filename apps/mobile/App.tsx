@@ -27,8 +27,8 @@ export default function App() {
     api.health().catch(() => undefined);
   }, []);
 
-  function beginCountdown(session: Session, lobby: LobbyPayload) {
-    dispatch({ type: "SESSION_READY", session, lobby });
+  function beginCountdown(lobby: LobbyPayload) {
+    dispatch({ type: "LOBBY", lobby });
     dispatch({ type: "COUNTDOWN", n: 3 });
   }
 
@@ -59,12 +59,9 @@ export default function App() {
         <CreateSetupScreen
           busy={state.connecting}
           onBusy={(v) => dispatch({ type: "SET_CONNECTING", connecting: v })}
-          session={state.session}
-          lobby={state.lobby}
-          onSession={(session, lobby) =>
+          onCreated={(session, lobby) =>
             dispatch({ type: "SESSION_READY", session, lobby })
           }
-          onStarted={beginCountdown}
           onFail={(error) => dispatch({ type: "FAIL", error })}
           onBack={() => dispatch({ type: "EXIT_HOME" })}
         />
@@ -90,6 +87,7 @@ export default function App() {
           state={state}
           session={state.session}
           dispatch={dispatch}
+          onHostStarted={beginCountdown}
         />
       )}
 

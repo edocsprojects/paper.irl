@@ -2,10 +2,12 @@ import { apiBase } from "./config";
 
 export type LatLon = { lat: number; lon: number };
 
-/** Fixed Simulator lobby code — Create and Join always share this. */
-export const DEMO_LOBBY_CODE = "ABC123";
+/** Hardcoded testing location — shown as numbers, not a place name. */
+export const TEST_LOCATION = {
+  lat: 44.97452,
+  lon: -93.23256,
+} as const;
 
-/** Matches server `seatPublicView` / freeplay lobby seats. */
 export type SeatView = {
   id: number;
   nickname: string;
@@ -91,8 +93,8 @@ export const api = {
         durationMs: opts.durationMs ?? 15 * 60 * 1000,
         maxSeats: opts.maxSeats ?? 8,
         radiusM: opts.radiusM ?? 500,
-        centerLat: opts.centerLat,
-        centerLon: opts.centerLon,
+        centerLat: opts.centerLat ?? TEST_LOCATION.lat,
+        centerLon: opts.centerLon ?? TEST_LOCATION.lon,
       }),
     }),
   join: (code: string, nickname: string) =>

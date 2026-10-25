@@ -27,11 +27,17 @@ import { fillBots, startBotLoop, stopBotLoop, tickBots } from "./bots.js";
 const defaultArena = buildKellerArena();
 const lobbies = new Map<string, LobbyState>();
 
-/** Fixed test lobby code so Create/Join always match on Simulator. */
-const DEMO_LOBBY_CODE = "ABC123";
-
+/** Random unused 6-character lobby code. */
 function code() {
-  return DEMO_LOBBY_CODE;
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let attempt = 0; attempt < 64; attempt++) {
+    let s = "";
+    for (let i = 0; i < 6; i++) {
+      s += alphabet[Math.floor(Math.random() * alphabet.length)]!;
+    }
+    if (!lobbies.has(s)) return s;
+  }
+  throw new Error("code_exhausted");
 }
 
 function lobbyPayload(lobby: LobbyState) {

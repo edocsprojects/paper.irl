@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -7,24 +7,20 @@ import {
   TextInput,
   View,
 } from "react-native";
-import * as Location from "expo-location";
 import { BrandMark } from "../components/BrandMark";
 import { LinearishBg } from "../components/LinearishBg";
-import { api, DEMO_LOBBY_CODE, type LobbyPayload } from "../lib/api";
-import { formatLatLon, KELLER_FALLBACK } from "../arena/geoProject";
+import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
+import { formatLatLon } from "../arena/geoProject";
 import { colors, fonts } from "../theme/tokens";
 import type { Session } from "../state/appMachine";
 
 type Props = {
   busy: boolean;
   onBusy: (v: boolean) => void;
-  onSession: (session: Session, lobby: LobbyPayload) => void;
-  onStarted: (session: Session, lobby: LobbyPayload) => void;
+  /** Fired after Create opens a real open lobby (bots filled). */
+  onCreated: (session: Session, lobby: LobbyPayload) => void;
   onFail: (error: string) => void;
   onBack: () => void;
-  /** Existing session if lobby already created on this screen. */
-  session: Session | null;
-  lobby: LobbyPayload | null;
 };
 
 function parseIntClamped(raw: string, fallback: number, min: number, max: number) {
@@ -34,118 +30,61 @@ function parseIntClamped(raw: string, fallback: number, min: number, max: number
 }
 
 /**
- * One setup screen: GPS lat/lon (Keller fallback numbers only), radius, max,
- * nickname, roster + ABC123, Start → fill bots + start match.
+ * Config only — Create opens the server lobby (random code + bots).
+ * Host presses Start on the lobby card, not here.
  */
 export function CreateSetupScreen({
   busy,
   onBusy,
-  onSession,
-  onStarted,
+  onCreated,
   onFail,
   onBack,
-  session,
-  lobby,
 }: Props) {
   const [nickname, setNickname] = useState("You");
   const [radiusM, setRadiusM] = useState("500");
   const [maxPlayers, setMaxPlayers] = useState("8");
-  const [lat, setLat] = useState<number>(KELLER_FALLBACK.lat);
-  const [lon, setLon] = useState<number>(KELLER_FALLBACK.lon);
-  const [gpsLabel, setGpsLabel] = useState("Locating…");
+  const lat = TEST_LOCATION.lat;
+  const lon = TEST_LOCATION.lon;
 
-  // Resolve GPS (Keller numbers only as Simulator fallback), then open ABC123.
-  useEffect(() => {
-    if (session) return;
-    let cancelled = false;
-    (async () => {
-      onBusy(true);
-      let centerLat: number = KELLER_FALLBACK.lat;
-      let centerLon: number = KELLER_FALLBACK.lon;
-      let label = "Location (Simulator fallback)";
-      try {
-        const perm = await Location.requestForegroundPermissionsAsync();
-        if (perm.status === "granted") {
-          const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          centerLat = pos.coords.latitude;
-          centerLon = pos.coords.longitude;
-          label = "Current location";
-        }
-      } catch {
-        /* keep fallback */
-      }
-      if (cancelled) return;
-      setLat(centerLat);
-      setLon(centerLon);
-      setGpsLabel(label);
-      try {
-        const maxSeats = parseIntClamped(maxPlayers, 8, 2, 8);
-        const radius = parseIntClamped(radiusM, 500, 50, 5000);
-        const created = await api.createLobby({
-          maxSeats,
-          radiusM: radius,
-          centerLat,
-          centerLon,
-        });
-        const joined = await api.join(created.code, nickname.trim() || "You");
-        const next = await api.get(created.code);
-        if (cancelled) return;
-        onSession(
-          {
-            code: created.code,
-            seatId: joined.seat.id,
-            nickname: joined.seat.nickname,
-            mode: "human",
-            isHost: true,
-          },
-          next,
-        );
-      } catch (e) {
-        if (!cancelled) onFail(String(e));
-      } finally {
-        if (!cancelled) onBusy(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Refresh roster so joiners appear on the same setup screen.
-  useEffect(() => {
-    if (!session) return;
-    const id = setInterval(() => {
-      api
-        .get(session.code)
-        .then((next) => onSession(session, next))
-        .catch(() => undefined);
-    }, 1500);
-    return () => clearInterval(id);
-  }, [session, onSession]);
-
-  async function startMatch() {
-    if (!session) return;
+  async function create() {
     onBusy(true);
     try {
-      // Keep existing ABC123 roster (joiners stay). Fill bots, then Start.
-      await api.fillBots(session.code, 1);
-      await api.start(session.code);
-      const next = await api.get(session.code);
-      onStarted(session, next);
+      const maxSeats = parseIntClamped(maxPlayers, 8, 2, 8);
+      const radius = parseIntClamped(radiusM, 500, 50, 5000);
+      // 1) Open a real lobby (phase=open) with a fresh random code.
+      const created = await api.createLobby({
+        maxSeats,
+        radiusM: radius,
+        centerLat: lat,
+        centerLon: lon,
+      });
+      if (created.phase !== "open") {
+        throw new Error("lobby_not_open");
+      }
+      // 2) Host joins while still open.
+      const joined = await api.join(created.code, nickname.trim() || "You");
+      // 3) Prefill empty seats with bots (still open — Start is separate).
+      await api.fillBots(created.code, 1);
+      const lobby = await api.get(created.code);
+      if (lobby.phase !== "open") {
+        throw new Error("lobby_not_open");
+      }
+      onCreated(
+        {
+          code: created.code,
+          seatId: joined.seat.id,
+          nickname: joined.seat.nickname,
+          mode: "human",
+          isHost: true,
+        },
+        lobby,
+      );
     } catch (e) {
       onFail(String(e));
     } finally {
       onBusy(false);
     }
   }
-
-  const seats = lobby?.seats ?? [];
-  const maxSeats = lobby?.maxSeats ?? parseIntClamped(maxPlayers, 8, 2, 8);
-  const slots = Array.from({ length: maxSeats }, (_, i) => seats[i] ?? null);
 
   return (
     <View style={styles.root}>
@@ -157,9 +96,8 @@ export function CreateSetupScreen({
         </Pressable>
       </View>
 
-      <Text style={styles.kicker}>{gpsLabel}</Text>
+      <Text style={styles.kicker}>Current location</Text>
       <Text style={styles.coords}>{formatLatLon(lat, lon)}</Text>
-      <Text style={styles.code}>Code {DEMO_LOBBY_CODE}</Text>
 
       <Text style={styles.label}>Nickname</Text>
       <TextInput
@@ -193,34 +131,15 @@ export function CreateSetupScreen({
         </View>
       </View>
 
-      <Text style={styles.rosterLabel}>Lobby · {seats.length}/{maxSeats}</Text>
-      <View style={styles.roster}>
-        {slots.map((s, i) =>
-          s ? (
-            <View key={s.id} style={styles.spot}>
-              <View style={[styles.dot, { backgroundColor: s.color }]} />
-              <Text style={styles.spotName} numberOfLines={1}>
-                {s.nickname}
-              </Text>
-            </View>
-          ) : (
-            <View key={`e-${i}`} style={styles.spot}>
-              <View style={[styles.dot, styles.dotEmpty]} />
-              <Text style={styles.spotEmpty}>Open</Text>
-            </View>
-          ),
-        )}
-      </View>
-
       <Pressable
         style={[styles.btn, busy && styles.btnDisabled]}
-        disabled={busy || !session}
-        onPress={startMatch}
+        disabled={busy}
+        onPress={create}
       >
         {busy ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.btnText}>Start</Text>
+          <Text style={styles.btnText}>Create</Text>
         )}
       </Pressable>
     </View>
@@ -236,7 +155,7 @@ const styles = StyleSheet.create({
   },
   back: { color: colors.accentDeep, fontFamily: fonts.ui },
   kicker: {
-    marginTop: 22,
+    marginTop: 28,
     color: colors.muted,
     fontFamily: fonts.body,
     fontSize: 13,
@@ -248,14 +167,8 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontVariant: ["tabular-nums"],
   },
-  code: {
-    marginTop: 6,
-    fontFamily: fonts.ui,
-    color: colors.accent,
-    letterSpacing: 1,
-  },
   label: {
-    marginTop: 16,
+    marginTop: 18,
     marginBottom: 6,
     fontFamily: fonts.ui,
     color: colors.inkSoft,
@@ -272,23 +185,8 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: "row", gap: 12 },
   half: { flex: 1 },
-  rosterLabel: {
-    marginTop: 20,
-    marginBottom: 8,
-    fontFamily: fonts.ui,
-    color: colors.muted,
-    fontSize: 12,
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-  },
-  roster: { gap: 6 },
-  spot: { flexDirection: "row", alignItems: "center", gap: 8 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  dotEmpty: { backgroundColor: "rgba(20,20,20,0.15)" },
-  spotName: { fontFamily: fonts.ui, color: colors.ink, flex: 1 },
-  spotEmpty: { fontFamily: fonts.body, color: colors.muted },
   btn: {
-    marginTop: 28,
+    marginTop: 32,
     backgroundColor: colors.accent,
     borderRadius: 4,
     paddingVertical: 16,

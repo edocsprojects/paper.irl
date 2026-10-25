@@ -97,7 +97,7 @@ export function derivePlayScreen(state: AppState): UiScreen {
   if (!lobby || !state.session) return "home";
   if (state.countdown != null) return "countdown";
   if (lobby.phase === "open") {
-    return state.session.isHost ? "create_setup" : "lobby_card";
+    return "lobby_card";
   }
   if (lobby.phase === "ended") {
     const ready = lobby.rematchReady ?? [];
