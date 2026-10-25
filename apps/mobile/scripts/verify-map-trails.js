@@ -140,11 +140,13 @@ function main() {
       .replace(/id:'trails'/g, "id:'trails_removed'")
       .replace(/id:"trails"/g, 'id:"trails_removed"');
     let failed = false;
+    quietAssert = true;
     try {
       analyze(html);
     } catch {
       failed = true;
     }
+    quietAssert = false;
     assert(
       failed,
       "VERIFY_TRAILS_BREAK=1 expected analyze() to fail after stripping trail layer",

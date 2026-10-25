@@ -4,6 +4,7 @@ import {
   seatIsBot,
   tickLobby,
   wanderSeat,
+  type Effect,
   type LobbyState,
 } from "@paper-irl/rules";
 
@@ -36,14 +37,16 @@ export function fillBots(lobby: LobbyState, leaveHumanSlots = 1): number {
   return added;
 }
 
-export function tickBots(lobby: LobbyState, now = Date.now()) {
-  tickLobby(lobby, now);
-  if (lobby.phase !== "live") return;
+export function tickBots(lobby: LobbyState, now = Date.now()): Effect[] {
+  const effects: Effect[] = [];
+  effects.push(...tickLobby(lobby, now));
+  if (lobby.phase !== "live") return effects;
   const rand = randFor(lobby.code);
   for (const seat of lobby.seats.values()) {
     if (!seatIsBot(seat)) continue;
-    wanderSeat(lobby, seat.id, rand, now);
+    effects.push(...wanderSeat(lobby, seat.id, rand, now));
   }
+  return effects;
 }
 
 /** ~5 Hz — pairs with human-scale wander steps for smooth trails. */

@@ -39,6 +39,15 @@ export type LobbyPayload = {
   rematchReady?: number[];
 };
 
+/** Subset of server @paper-irl/rules Effect kinds used for snackbars. */
+export type GameEffect =
+  | { kind: "banked"; seatId: number }
+  | { kind: "cut"; victimId: number; byId: number }
+  | { kind: "boundaryPush"; seatId: number }
+  | { kind: string; [k: string]: unknown };
+
+export type LobbyWithEffects = LobbyPayload & { effects?: GameEffect[] };
+
 export type CreateLobbyOpts = {
   durationMs?: number;
   maxSeats?: number;
@@ -114,12 +123,12 @@ export const api = {
     }),
   get: (code: string) => req<LobbyPayload>(`/lobbies/${code}`),
   fix: (code: string, seatId: number, fix: Record<string, unknown>) =>
-    req<LobbyPayload>(`/lobbies/${code}/fix`, {
+    req<LobbyWithEffects>(`/lobbies/${code}/fix`, {
       method: "POST",
       body: JSON.stringify({ seatId, fix }),
     }),
   autopilot: (code: string, seatId: number, opts?: { autoPlant?: boolean }) =>
-    req<LobbyPayload>(`/lobbies/${code}/autopilot`, {
+    req<LobbyWithEffects>(`/lobbies/${code}/autopilot`, {
       method: "POST",
       body: JSON.stringify({
         seatId,

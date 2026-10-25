@@ -309,13 +309,13 @@ async function main() {
     const lobby = lobbies.get(req.params.code.toUpperCase());
     if (!lobby) return reply.code(404).send({ error: "not_found" });
     const now = Date.now();
-    tickBots(lobby, now);
+    const effects = tickBots(lobby, now);
     const rand = mulberry32((req.body.seed ?? 1) + req.body.seatId * 97 + now);
     const seat = lobby.seats.get(req.body.seatId);
     if (!seat) return reply.code(404).send({ error: "no_seat" });
     const autoPlant = req.body.autoPlant !== false;
-    wanderSeat(lobby, seat.id, rand, now, { autoPlant });
-    return lobbyPayload(lobby);
+    effects.push(...wanderSeat(lobby, seat.id, rand, now, { autoPlant }));
+    return { effects, ...lobbyPayload(lobby) };
   });
 
   app.get<{ Params: { code: string } }>(

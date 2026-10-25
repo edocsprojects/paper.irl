@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState as RNAppState, StyleSheet, Text, View } from "react-native";
-import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
+import {
+  api,
+  TEST_LOCATION,
+  type LobbyPayload,
+  type LobbyWithEffects,
+} from "../lib/api";
+import { snacksFromEffects } from "../lib/effectSnacks";
 import { GameMap, mapFingerprint } from "../map/GameMap";
 import { SnackbarHost } from "../components/SnackbarHost";
 import { PlayHud } from "../components/PlayHud";
@@ -63,6 +69,20 @@ export function GameScreen({
     [dispatch, session.seatId],
   );
 
+  const applyEffects = useCallback(
+    (next: LobbyWithEffects) => {
+      pushLobby(next);
+      for (const snack of snacksFromEffects(
+        next.effects,
+        session.seatId,
+        next,
+      )) {
+        dispatch({ type: "SNACK", text: snack.text, tone: snack.tone });
+      }
+    },
+    [pushLobby, dispatch, session.seatId],
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function refresh() {
@@ -120,7 +140,7 @@ export function GameScreen({
       api
         .autopilot(session.code, session.seatId, { autoPlant: false })
         .then((next) => {
-          pushLobby(next);
+          applyEffects(next);
         })
         .catch(() => undefined);
     }, 200);
@@ -129,7 +149,7 @@ export function GameScreen({
     lobby?.phase,
     session.code,
     session.seatId,
-    pushLobby,
+    applyEffects,
     state.countdown,
   ]);
 
@@ -148,7 +168,7 @@ export function GameScreen({
         mock: true,
         plant: true,
       });
-      pushLobby(next);
+      applyEffects(next);
       dispatch({ type: "SPAWN_CONFIRMED" });
       dispatch({
         type: "SNACK",
