@@ -58,6 +58,23 @@ describe("lobby lifecycle", () => {
     expect(seat.nickname).toBe("Alex2");
   });
 
+  it("late join into a live event only with allowLive, plants where they stand when free", () => {
+    const lobby = createLobby("EVT", arena, { durationMs: 7 * 24 * 3600_000 });
+    joinLobby(lobby, "Early");
+    const t0 = 1_000_000;
+    startLobby(lobby, t0);
+    expect(() => joinLobby(lobby, "Late")).toThrow(/lobby_not_open/);
+
+    const { seat } = joinLobby(lobby, "Late", { allowLive: true });
+    expect(seat.mode).toBe("joining");
+    const here = fromLocalM(arena.centerLat, arena.centerLon, -150, 120);
+    const effects = applyFix(lobby, seat.id, fixAt(here.lat, here.lon, t0 + 100), t0 + 100);
+    expect(effects.some((e) => e.kind === "planted")).toBe(true);
+    expect(seat.mode).toBe("safe");
+    expect(haversineM(seat.position!.lat, seat.position!.lon, here.lat, here.lon)).toBeLessThan(25);
+    expect(seat.areaM2).toBeGreaterThan(0);
+  });
+
   it("requires host start before claims", () => {
     const lobby = createLobby("KELL", arena);
     const { seat } = joinLobby(lobby, "Sam");

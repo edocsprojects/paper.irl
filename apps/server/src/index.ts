@@ -1,3 +1,4 @@
+import "./env.js";
 import Fastify from "fastify";
 import {
   applyFix,
@@ -17,7 +18,9 @@ import {
   type Fix,
   type LobbyState,
 } from "@paper-irl/rules";
+import { authConfigured, identify } from "./auth.js";
 import { fillBots, startBotLoop, stopBotLoop, tickBots } from "./bots.js";
+import { EventManager } from "./event.js";
 
 /**
  * Minimal HTTP API for local demos.
@@ -90,11 +93,12 @@ async function maybeInitDb() {
 
 async function main() {
   const db = await maybeInitDb();
+  const event = await EventManager.load(db);
   const app = Fastify({ logger: true });
 
   app.addHook("onRequest", async (req, reply) => {
     reply.header("Access-Control-Allow-Origin", "*");
-    reply.header("Access-Control-Allow-Headers", "Content-Type");
+    reply.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Guest-Id");
     reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     if (req.method === "OPTIONS") {
       return reply.code(204).send();
@@ -327,9 +331,45 @@ async function main() {
     },
   );
 
+  /** Public 7-day event: live map state for everyone (seat id when identified). */
+  app.get("/event", async (req) => {
+    const who = await identify(req);
+    return { ...event.payload(event.seatFor(who?.key ?? null)), authConfigured };
+  });
+
+  app.get("/event/results", async () => ({ results: event.recentResults() }));
+
+  app.post<{ Body: { name?: string } }>("/event/join", async (req, reply) => {
+    const who = await identify(req);
+    if (!who) return reply.code(401).send({ error: "unauthenticated" });
+    try {
+      const seatId = event.join(who.key, req.body?.name ?? "Player");
+      return event.payload(seatId);
+    } catch (e) {
+      return reply.code(400).send({ error: String(e) });
+    }
+  });
+
+  app.post<{ Body: { fix: Fix } }>("/event/fix", async (req, reply) => {
+    const who = await identify(req);
+    if (!who) return reply.code(401).send({ error: "unauthenticated" });
+    const seatId = event.seatFor(who.key);
+    if (seatId === null) return reply.code(409).send({ error: "not_joined" });
+    const fix = req.body?.fix;
+    if (!fix || typeof fix.lat !== "number" || typeof fix.lon !== "number") {
+      return reply.code(400).send({ error: "bad_fix" });
+    }
+    const { outside, effects } = event.fix(seatId, fix);
+    return { outside, effects, ...event.payload(seatId) };
+  });
+
   app.addHook("onClose", async () => {
     for (const c of lobbies.keys()) stopBotLoop(c);
+    await event.stop();
   });
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.once(sig, () => void app.close().then(() => process.exit(0)));
+  }
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen({ port, host: "0.0.0.0" });

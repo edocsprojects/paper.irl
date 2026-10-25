@@ -19,6 +19,8 @@ import {
 
 export const YOU_ID = 1;
 const BOTS = 8;
+export const EVENT_MS = 7 * 24 * 60 * 60 * 1000;
+const BOT_NAMES = ["Bobby", "Zack", "Maya", "Leo", "Priya", "Sam", "Ines"];
 /** Demo grace after plant so P1 isn't wiped the same second they spawn. */
 const YOU_PROTECT_MS = 25_000;
 
@@ -138,7 +140,8 @@ function wanderStep(
     heading += (rand() - 0.5) * 1.15;
   }
 
-  const stepM = 3.5 + rand() * 5.5;
+  // Realistic jog: one tick = one second, so 2.2–3.6 m per tick.
+  const stepM = 2.2 + rand() * 1.4;
   let next = fromLocalM(
     pos.lat,
     pos.lon,
@@ -203,18 +206,20 @@ export class CampusSim {
   nowMs: number;
   private seed: number;
   private youProtectUntilMs = 0;
+  /** False after you tap End: your seat stays (land persists) but stops moving. */
+  youActive = true;
 
   constructor(arena: Arena = buildKellerArena(), seed = 42) {
     this.seed = seed;
     this.rand = mulberry32(seed);
     headings.clear();
     this.state = createLobby("DEMO", arena, {
-      durationMs: 15 * 60 * 1000,
+      durationMs: EVENT_MS,
       maxSeats: BOTS,
     });
     joinLobby(this.state, "You");
     for (let i = 2; i <= BOTS; i++) {
-      joinLobby(this.state, `Bot${i}`);
+      joinLobby(this.state, BOT_NAMES[i - 2] ?? `Bot${i}`);
     }
     this.t0 = Date.UTC(2026, 9, 24, 18, 0, 0);
     startLobby(this.state, this.t0);
@@ -228,12 +233,12 @@ export class CampusSim {
     this.youProtectUntilMs = 0;
     headings.clear();
     this.state = createLobby("DEMO", arena, {
-      durationMs: 15 * 60 * 1000,
+      durationMs: EVENT_MS,
       maxSeats: BOTS,
     });
     joinLobby(this.state, "You");
     for (let i = 2; i <= BOTS; i++) {
-      joinLobby(this.state, `Bot${i}`);
+      joinLobby(this.state, BOT_NAMES[i - 2] ?? `Bot${i}`);
     }
     startLobby(this.state, this.t0);
     this.nowMs = this.t0;
@@ -288,7 +293,7 @@ export class CampusSim {
       );
     }
 
-    if (you && !pauseYou) {
+    if (you && !pauseYou && this.youActive) {
       effects.push(
         ...botStep(this.state, you, this.rand, this.nowMs, { protectYou }),
       );
