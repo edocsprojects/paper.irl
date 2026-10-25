@@ -1,6 +1,6 @@
 # paper.irl — mobile (Expo)
 
-React Native (Expo) client sharing `@paper-irl/rules`. **Android** (Expo Go) and **iOS** (native `ios/` for Xcode). Street map via MapLibre in a WebView (OpenFreeMap — **no Google Maps key**).
+React Native (Expo) client sharing `@paper-irl/rules`. **Android** + **iOS** (native `ios/` for Xcode). Street map via MapLibre in a WebView (OpenFreeMap — **no Google Maps key**).
 
 ## Launch modes (one app, both platforms)
 
@@ -10,12 +10,7 @@ React Native (Expo) client sharing `@paper-irl/rules`. **Android** (Expo Go) and
 | `pnpm mobile:join-bots` / `pnpm mobile:ios:join-bots` | `join-bots` | Join (or create) a lobby with 7 bots; **your seat is auto-moved** like the sim |
 | `pnpm mobile:host-bots` / `pnpm mobile:ios:host-bots` | `host-bots` | Create lobby, fill 7 bots, start; your seat auto-moved for demo footage |
 
-Always start the API first:
-
-```bash
-pnpm --filter @paper-irl/rules build
-pnpm dev:server   # http://0.0.0.0:3001
-```
+Always start the API first (`pnpm dev:server`).
 
 Default API URL (override with `EXPO_PUBLIC_API_URL`):
 
@@ -27,134 +22,77 @@ Default API URL (override with `EXPO_PUBLIC_API_URL`):
 
 ---
 
-## iOS / Xcode (Mac)
+## Metro monorepo (required reading)
 
-Cloud agents cannot run Xcode. Do this on your Mac. A **free Apple ID / Personal Team** is enough for the **Simulator**. The paid **Apple Developer Program ($99/yr)** is only needed for a physical device install beyond short personal runs, or **TestFlight**.
+Expo’s Metro **server root is the monorepo root**. AppDelegate must use:
 
-### One-time Mac setup
-
-1. Install **Xcode** from the Mac App Store (includes Simulator). Open it once and accept the license.
-2. Install Xcode CLT if prompted: `xcode-select --install`
-3. Install **CocoaPods**: `sudo gem install cocoapods` (or `brew install cocoapods`)
-4. Node **20+** and pnpm: `corepack enable`
-
-### After pulling this branch (Metro / iOS entry)
-
-Under pnpm, `.expo/.virtual-metro-entry` still lands on `expo/AppEntry` (`../../App` breaks). Fix:
-
-- `package.json` `"main": "index.js"` + local `index.js` → `./App`
-- iOS `AppDelegate` DEBUG root = `index` (not virtual-metro-entry)
-- `ios/.xcode.env` `ENTRY_FILE=index.js`
-- `@babel/runtime` direct dep + `.npmrc` hoist
-
-**Verify you have the fix, then clean install:**
-
-```bash
-git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline
-rm -rf node_modules apps/mobile/node_modules apps/mobile/.expo apps/mobile/.verify-export
-pnpm install && pnpm --filter @paper-irl/rules build
-pnpm --filter @paper-irl/mobile verify:bundle   # Linux-safe; must PASS
-pnpm dev:server                                 # other terminal
-pnpm mobile:ios:host-bots
+```objc
+jsBundleURLForBundleRoot:@".expo/.virtual-metro-entry"
 ```
 
-### Open in Xcode and Run (Simulator)
+Expo rewrites that to `apps/mobile/index` (from `"main": "index.js"`).  
+**Do not** use `@"index"` — Metro looks for `<repo>/index.js` and redboxes.
 
-From the **repo root**:
+Also: `.npmrc` `node-linker=hoisted`, `ios/.xcode.env` `ENTRY_FILE=index.js`, local `index.js` → `registerRootComponent(App)`.
 
-```bash
-pnpm install
-pnpm --filter @paper-irl/rules build
-pnpm dev:server
-```
-
-In a **second** terminal, install pods and open the workspace:
+### Linux gate (runs in cloud / `pnpm test`)
 
 ```bash
-cd apps/mobile/ios
-pod install
-open paperirl.xcworkspace
+pnpm verify:mobile
+# or: pnpm --filter @paper-irl/mobile verify:bundle
 ```
 
-> Always open **`paperirl.xcworkspace`**, not the `.xcodeproj`. `pod install` creates the workspace (Pods are not committed).
-
-In Xcode:
-
-1. Top bar: select the **paperirl** scheme.
-2. Pick an **iPhone simulator** (e.g. iPhone 16).
-3. Signing: select your **Personal Team** (free Apple ID) under *Signing & Capabilities* if Xcode asks. Simulator builds work with Personal Team.
-4. Press **Run** (▶) or `Cmd+R`.
-
-Metro / JS: either leave Xcode’s build to start the bundler, or from repo root:
-
-```bash
-EXPO_PUBLIC_LAUNCH=host-bots pnpm --filter @paper-irl/mobile start
-```
-
-Then Run again in Xcode so the app loads that launch mode.
-
-### CLI shortcut (no manual Xcode click)
-
-With the server already running:
-
-```bash
-pnpm mobile:ios:host-bots   # builds, pods if needed, launches Simulator
-# or: pnpm mobile:ios / pnpm mobile:ios:join-bots
-```
-
-### Regenerate `ios/` after changing `app.json`
-
-```bash
-pnpm mobile:prebuild:ios
-# on Mac, then:
-cd apps/mobile/ios && pod install
-```
-
-`apps/mobile/ios` is committed (without `Pods/`) so you can open Xcode without re-prebuilding on a clean clone. Re-run prebuild when native config or plugins change.
-
-### Apple account cheat sheet
-
-| Goal | Need |
-|---|---|
-| Run in **Simulator** | Free Apple ID / Personal Team |
-| USB debug on your own iPhone (limited) | Free Personal Team (7-day cert; fiddly) |
-| Friends via **TestFlight** / device distribution | Paid Apple Developer **$99/yr** |
+Catches: `@babel/runtime`, `expo/AppEntry` `../../App`, bare `./index` from repo root, and HTTP-probes virtual-metro-entry + `/apps/mobile/index.bundle`.
 
 ---
 
-## Android Studio emulator + demo footage
+## iOS / Xcode (Mac) — after `pnpm verify:mobile` is green
 
-1. Install [Android Studio](https://developer.android.com/studio) → SDK + one Virtual Device (API 34+, Google APIs image is fine).
-2. Install Node 20+, enable pnpm (`corepack enable`).
-3. From repo root:
+Free Apple **Personal Team** is enough for **Simulator**. Paid **$99/yr** only for TestFlight / broader device distribution.
+
+### Terminal 1 — API
+
+```bash
+git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline
+rm -rf node_modules apps/mobile/node_modules apps/mobile/.expo apps/mobile/.verify-export apps/mobile/.verify-export-from-root
+pnpm install
+pnpm --filter @paper-irl/rules build
+pnpm verify:mobile
+pnpm dev:server
+```
+
+### Terminal 2 — iOS
+
+```bash
+pnpm mobile:ios:host-bots
+```
+
+Or open Xcode after pods:
+
+```bash
+cd apps/mobile/ios && pod install && open paperirl.xcworkspace
+```
+
+Xcode → **paperirl** → iPhone Simulator → **Run** (rebuild so AppDelegate is current).
+
+---
+
+## Android Studio emulator
 
 ```bash
 pnpm install
 pnpm --filter @paper-irl/rules build
-pnpm dev:server
+pnpm dev:server          # terminal 1
+pnpm mobile:host-bots    # terminal 2
 ```
 
-4. In a second terminal:
-
-```bash
-pnpm mobile:host-bots
-```
-
-5. When Metro asks, press `a` (Android) or wait for the emulator to open the app.
-6. In-app: tap **Create & start** — bots fill + match starts; your seat autopilots.
-7. **Screen record for footage**
-   - Emulator: `⋯` menu → **Record and Playback** → Start recording → Stop → Save.
-   - Or CLI: `adb shell screenrecord /sdcard/paper.mp4` then `adb pull /sdcard/paper.mp4`.
-
-### Human GPS on emulator
-
-Extended Controls (`⋯`) → **Location** → set a single point near Keller Hall (`44.97452, -93.23256`) or play a GPX route. Then use `pnpm mobile` and grant location.
+Same Metro stack as iOS — `pnpm verify:mobile` gates both. Browser escape hatch: `pnpm demo`.
 
 ## Project layout
 
 ```
-apps/mobile/          Expo app (TS)
-apps/mobile/ios/      Native Xcode project (prebuild; open *.xcworkspace after pods)
+apps/mobile/          Expo app (TS) + index.js entry
+apps/mobile/ios/      Native Xcode project (open *.xcworkspace after pods)
 apps/server/          HTTP lobby + bot loop
 packages/rules/       Shared plant/trail/cut/wipe + wanderSeat
 ```

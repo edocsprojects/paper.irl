@@ -24,10 +24,10 @@
 - (NSURL *)bundleURL
 {
 #if DEBUG
-  // Use local index.js — NOT .expo/.virtual-metro-entry.
-  // Under pnpm, the virtual entry still resolves to expo/AppEntry.js, whose
-  // relative "../../App" import cannot see apps/mobile/App.tsx.
-  return [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@"index"];
+  // Must use virtual-metro-entry in a monorepo: Metro's server root is the
+  // workspace root, so @"index" looks for <repo>/index.js and redboxes.
+  // Expo rewrites this URL to apps/mobile/index (from package.json "main").
+  return [[RCTBundleURLProvider sharedSettings] jsBundleURLForBundleRoot:@".expo/.virtual-metro-entry"];
 #else
   return [[NSBundle mainBundle] URLForResource:@"main" withExtension:@"jsbundle"];
 #endif
