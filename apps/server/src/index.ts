@@ -7,6 +7,7 @@ import {
   joinLobby,
   markRematchReady,
   mulberry32,
+  resetBotMemory,
   seatIsBot,
   seatPublicView,
   startLobby,
@@ -17,7 +18,7 @@ import {
   type Fix,
   type LobbyState,
 } from "@paper-irl/rules";
-import { fillBots, startBotLoop, stopBotLoop, tickBots } from "./bots.js";
+import { fillBots, startBotLoop, stopBotLoop } from "./bots.js";
 
 /**
  * Minimal HTTP API for local demos.
@@ -55,10 +56,16 @@ function lobbyPayload(lobby: LobbyState) {
       centerLat: lobby.arena.centerLat,
       centerLon: lobby.arena.centerLon,
       radiusM: lobby.arena.radiusM,
+      starterRadiusM: lobby.arena.starterRadiusM,
     },
+    serverNowMs: Date.now(),
+    speedScale: lobby.speedScale,
     seats: [...lobby.seats.values()].map(seatPublicView),
     top3: topScores(lobby, 3).map(seatPublicView),
     rematchReady: [...lobby.rematchReady],
+    notices: lobby.notices.map((n) => ({ ...n })),
+    feed: lobby.feed.map((f) => ({ ...f, at: f.at ? { ...f.at } : null })),
+    pops: lobby.pops.map((p) => ({ ...p, at: { ...p.at } })),
   };
 }
 
@@ -116,6 +123,8 @@ async function main() {
       radiusM?: number;
       centerLat?: number;
       centerLon?: number;
+      /** Demo pace for bots/autopilot (1 = real jog, max 4). */
+      speedScale?: number;
     };
   }>("/lobbies", async (req) => {
     const c = code();
@@ -140,6 +149,7 @@ async function main() {
     const lobby = createLobby(c, playArena, {
       durationMs: req.body?.durationMs ?? 15 * 60 * 1000,
       maxSeats,
+      speedScale: typeof req.body?.speedScale === "number" ? req.body.speedScale : 1,
     });
     lobbies.set(c, lobby);
     if (db) {
@@ -226,12 +236,17 @@ async function main() {
   }>("/lobbies/:code/fix", async (req, reply) => {
     const lobby = lobbies.get(req.params.code.toUpperCase());
     if (!lobby) return reply.code(404).send({ error: "not_found" });
+    const seat = lobby.seats.get(Number(req.body?.seatId));
+    if (!seat) return reply.code(404).send({ error: "no_seat" });
+    if (!req.body?.fix || typeof req.body.fix !== "object") {
+      return reply.code(400).send({ error: "bad_fix" });
+    }
     const now = Date.now();
-    tickLobby(lobby, now);
-    const effects = applyFix(lobby, req.body.seatId, req.body.fix, now);
+    const effects = tickLobby(lobby, now);
+    effects.push(...applyFix(lobby, seat.id, req.body.fix, now));
     return {
       effects,
-      seat: seatPublicView(lobby.seats.get(req.body.seatId)!),
+      seat: seatPublicView(seat),
       ...lobbyPayload(lobby),
     };
   });
@@ -283,6 +298,7 @@ async function main() {
         return reply.code(400).send({ error: "waiting_for_players" });
       }
       stopBotLoop(lobby.code);
+      resetBotMemory(lobby.code);
       const effects = startRematch(lobby, Date.now());
       startBotLoop(lobby, 200);
       if (db) {
@@ -298,9 +314,9 @@ async function main() {
   });
 
   /**
-   * Auto-pilot the local human seat: movement only by default.
-   * Client sends autoPlant:false so Ethan taps to plant/respawn.
-   * Bots still auto-plant via tickBots.
+   * Dev auto-pilot for the local human seat (no GPS, e.g. a simulator).
+   * Client sends autoPlant:false until the player taps Spawn. Bots move on
+   * their own server loop — never step them here (that double-sped them).
    */
   app.post<{
     Params: { code: string };
@@ -309,7 +325,7 @@ async function main() {
     const lobby = lobbies.get(req.params.code.toUpperCase());
     if (!lobby) return reply.code(404).send({ error: "not_found" });
     const now = Date.now();
-    const effects = tickBots(lobby, now);
+    const effects = tickLobby(lobby, now);
     const rand = mulberry32((req.body.seed ?? 1) + req.body.seatId * 97 + now);
     const seat = lobby.seats.get(req.body.seatId);
     if (!seat) return reply.code(404).send({ error: "no_seat" });

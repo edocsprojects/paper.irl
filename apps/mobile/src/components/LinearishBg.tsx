@@ -23,7 +23,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: "42%",
-    backgroundColor: "#cfd8e0",
+    backgroundColor: "#15191d",
     opacity: 0.85,
   },
   glow: {

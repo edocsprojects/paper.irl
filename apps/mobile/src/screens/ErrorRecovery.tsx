@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
   },
   primary: {
     marginTop: 20,
-    backgroundColor: colors.ink,
+    backgroundColor: colors.accent,
     paddingVertical: 13,
     alignItems: "center",
     borderRadius: 4,

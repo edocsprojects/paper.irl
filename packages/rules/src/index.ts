@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./geo.js";
+export * from "./territory.js";
 export * from "./arena.js";
 export * from "./kellerGraph.js";
 export * from "./graphJson.js";

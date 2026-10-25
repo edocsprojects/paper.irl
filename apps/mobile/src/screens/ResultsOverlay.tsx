@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { FadeGate } from "../components/FadeGate";
 import { BrandMark } from "../components/BrandMark";
 import { colors, fonts } from "../theme/tokens";
+import { sqft } from "../lib/units";
 import type { SeatView } from "../state/appMachine";
 
 type Props = {
@@ -34,7 +35,7 @@ export function ResultsOverlay({
             <View style={[styles.swatch, { backgroundColor: s.color }]} />
             <Text style={styles.rank}>{i + 1}</Text>
             <Text style={styles.name}>{s.nickname}</Text>
-            <Text style={styles.area}>{Math.round(s.areaM2)} m²</Text>
+            <Text style={styles.area}>{sqft(s.areaM2)}</Text>
           </View>
         ))}
         <Pressable style={styles.primary} onPress={onPlayAgain}>

@@ -28,7 +28,7 @@ export function JoinScreen({
   onFail,
   onBack,
 }: Props) {
-  const [nickname, setNickname] = useState("You");
+  const [nickname, setNickname] = useState("");
   const [code, setCode] = useState("");
 
   async function join() {
@@ -36,7 +36,7 @@ export function JoinScreen({
     try {
       const lobbyCode = code.trim().toUpperCase();
       if (lobbyCode.length < 4) throw new Error("Enter the lobby code");
-      const joined = await api.join(lobbyCode, nickname.trim() || "You");
+      const joined = await api.join(lobbyCode, nickname.trim());
       const lobby = await api.get(lobbyCode);
       const hostId = Math.min(...lobby.seats.map((s) => s.id));
       onJoined(
@@ -75,6 +75,7 @@ export function JoinScreen({
         value={nickname}
         onChangeText={setNickname}
         autoCapitalize="none"
+        placeholder="Blank = Player N"
         placeholderTextColor={colors.muted}
       />
 
@@ -130,7 +131,7 @@ const styles = StyleSheet.create({
     color: colors.inkSoft,
   },
   input: {
-    backgroundColor: "rgba(255,255,255,0.92)",
+    backgroundColor: colors.field,
     borderRadius: 4,
     borderWidth: 1,
     borderColor: colors.line,
@@ -141,7 +142,7 @@ const styles = StyleSheet.create({
   },
   btn: {
     marginTop: 28,
-    backgroundColor: colors.ink,
+    backgroundColor: colors.accent,
     borderRadius: 4,
     paddingVertical: 16,
     alignItems: "center",

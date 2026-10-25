@@ -40,6 +40,8 @@ export type AppState = {
   error: string | null;
   snack: { id: number; text: string; tone: SnackTone } | null;
   plantedOnce: boolean;
+  /** Player tapped Spawn — fixes now plant as soon as they reach the marker. */
+  spawnArmed: boolean;
   mountKey: number;
   appActive: boolean;
   connecting: boolean;
@@ -56,7 +58,7 @@ export type AppEvent =
   | { type: "COUNTDOWN"; n: number | null }
   | { type: "SNACK"; text: string; tone?: SnackTone }
   | { type: "CLEAR_SNACK" }
-  | { type: "SPAWN_CONFIRMED" }
+  | { type: "SPAWN_ARMED" }
   | { type: "PLAY_AGAIN_READY" }
   | { type: "EXIT_HOME" }
   | { type: "FAIL"; error: string }
@@ -75,6 +77,7 @@ export function initialAppState(): AppState {
     error: null,
     snack: null,
     plantedOnce: false,
+    spawnArmed: false,
     mountKey: 0,
     appActive: true,
     connecting: false,
@@ -85,6 +88,10 @@ export function initialAppState(): AppState {
 function youOf(state: AppState): SeatView | null {
   if (!state.lobby || !state.session) return null;
   return state.lobby.seats.find((s) => s.id === state.session!.seatId) ?? null;
+}
+
+function isAlive(you: SeatView | null): boolean {
+  return you?.mode === "safe" || you?.mode === "trailing";
 }
 
 function needsPlant(you: SeatView | null, phase: string | undefined): boolean {
@@ -126,13 +133,13 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
 
     case "OPEN_CREATE":
       return leaveOverlay(
-        { ...state, session: null, lobby: null, countdown: null, plantedOnce: false },
+        { ...state, session: null, lobby: null, countdown: null, plantedOnce: false, spawnArmed: false },
         "create_setup",
       );
 
     case "OPEN_JOIN":
       return leaveOverlay(
-        { ...state, session: null, lobby: null, countdown: null, plantedOnce: false },
+        { ...state, session: null, lobby: null, countdown: null, plantedOnce: false, spawnArmed: false },
         "join",
       );
 
@@ -152,6 +159,7 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
         session: event.session,
         lobby: event.lobby ?? state.lobby,
         plantedOnce: false,
+        spawnArmed: false,
         error: null,
         connecting: false,
       };
@@ -161,6 +169,11 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
     case "LOBBY": {
       const next: AppState = { ...state, lobby: event.lobby, error: null };
       if (!next.session) return next;
+      const youNow = youOf(next);
+      if (isAlive(youNow)) {
+        next.plantedOnce = true;
+        next.spawnArmed = false;
+      }
       if (state.countdown != null) {
         return { ...next, screen: "countdown" };
       }
@@ -169,6 +182,7 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
       }
       if (event.lobby.phase === "live" && state.lobby?.phase === "ended") {
         next.plantedOnce = false;
+        next.spawnArmed = false;
       }
       // Joiner: open → live means host started — enter countdown if not already
       if (
@@ -191,21 +205,16 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
         state.screen !== "death_respawn" &&
         (wasAlive || state.plantedOnce);
       if (died) {
-        // Toast only — never a modal / raw error for the cut message.
-        next.snack = {
-          id: (state.snack?.id ?? 0) + 1,
-          text: "You were cut",
-          tone: "bad",
-        };
+        // No toast: the kill feed shows "Player N cut You" (highlighted) and
+        // the death burst + respawn ring explain what to do next.
+        next.spawnArmed = false;
       }
       if (derived === state.screen) return next;
       return leaveOverlay(next, derived);
     }
 
-    case "SPAWN_CONFIRMED": {
-      const next = { ...state, plantedOnce: true };
-      return leaveOverlay(next, derivePlayScreen(next));
-    }
+    case "SPAWN_ARMED":
+      return { ...state, spawnArmed: true };
 
     case "PLAY_AGAIN_READY":
       return leaveOverlay(state, "rematch_waiting");
@@ -217,6 +226,7 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
           session: null,
           lobby: null,
           plantedOnce: false,
+          spawnArmed: false,
           error: null,
           snack: null,
           countdown: null,
@@ -272,7 +282,11 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
   }
 }
 
-export function spawnOverlayVisible(screen: UiScreen, auto: boolean): boolean {
-  if (auto) return false;
-  return screen === "match_starting" || screen === "death_respawn";
+/**
+ * Full tap-to-spawn overlay: match start only, until armed. Respawns need no
+ * tap — walk into your respawn ring and you're back in.
+ */
+export function spawnOverlayVisible(screen: UiScreen, armed: boolean): boolean {
+  if (armed) return false;
+  return screen === "match_starting";
 }

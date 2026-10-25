@@ -35,8 +35,8 @@ function ownedGeoJson(snap: SimSnapshot) {
   const features: GeoJSON.Feature[] = [];
   for (const seat of snap.seats) {
     const border = darken(seat.color, 0.32);
-    for (const ring of seat.owned) {
-      if (ring.length < 3) continue;
+    for (const poly of seat.owned) {
+      if (!poly[0] || poly[0].length < 4) continue;
       features.push({
         type: "Feature",
         properties: {
@@ -46,7 +46,7 @@ function ownedGeoJson(snap: SimSnapshot) {
         },
         geometry: {
           type: "Polygon",
-          coordinates: [ringCoords(ring)],
+          coordinates: poly.map(ringCoords),
         },
       });
     }

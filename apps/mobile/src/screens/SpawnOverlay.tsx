@@ -20,12 +20,12 @@ export function SpawnOverlay({ active, mountKey, wiped, onSpawn }: Props) {
         <View style={styles.copyBlock}>
           <Text style={styles.kicker}>{wiped ? "Respawn" : "Match start"}</Text>
           <Text style={styles.title}>
-            {wiped ? "Tap to reload" : "Plant marker"}
+            {wiped ? "Back in?" : "Spawn here"}
           </Text>
           <Text style={styles.copy}>
             {wiped
-              ? "Move to your marker, then tap to get back in."
-              : "Run to your marker, then tap to plant."}
+              ? "Your new territory starts right where you're standing."
+              : "Your territory starts right where you're standing. Leave it to draw a trail, loop back to claim land."}
           </Text>
           <View style={styles.btn}>
             <Text style={styles.btnText}>
@@ -38,7 +38,43 @@ export function SpawnOverlay({ active, mountKey, wiped, onSpawn }: Props) {
   );
 }
 
+/**
+ * Non-blocking message while you are out of the game. Styled like the
+ * snackbar; your dashed respawn ring on the map shows where to go.
+ */
+export function SpawnHint({ text }: { text: string }) {
+  return (
+    <View style={styles.hintWrap} pointerEvents="none">
+      <View style={styles.hint}>
+        <Text style={styles.hintText}>{text}</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  hintWrap: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 96,
+    alignItems: "center",
+    zIndex: 15,
+  },
+  hint: {
+    backgroundColor: "rgba(20,20,20,0.88)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.85)",
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  hintText: {
+    color: "#fff",
+    fontFamily: fonts.ui,
+    fontSize: 14,
+    textAlign: "center",
+  },
   layer: {
     backgroundColor: "rgba(12,14,16,0.42)",
     zIndex: 20,

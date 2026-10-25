@@ -52,66 +52,22 @@ section("@paper-irl/rules Metro resolve (.js → .ts source)");
   ok("verify-rules-metro-resolve (./types.js → types.ts)");
 }
 
-section("map trail render HTML (MapLibre layer, not payload-only)");
+section("map runtime (real page script vs MapLibre style-spec validation)");
 {
-  const trailProbe = spawnSync(
-    "node",
-    [path.join(__dirname, "verify-map-trails.js")],
-    { cwd: projectRoot, encoding: "utf8", env: process.env },
-  );
-  process.stdout.write(trailProbe.stdout || "");
-  process.stderr.write(trailProbe.stderr || "");
-  if (trailProbe.status !== 0) {
-    fail(`verify-map-trails exited ${trailProbe.status}`);
-  }
-  const breakProbe = spawnSync(
-    "node",
-    [path.join(__dirname, "verify-map-trails.js")],
-    {
+  for (const [label, env] of [
+    ["verify-map-runtime", {}],
+    ["verify-map-runtime BREAK self-check", { VERIFY_MAP_BREAK: "1" }],
+  ]) {
+    const probe = spawnSync("node", [path.join(__dirname, "verify-map-runtime.js")], {
       cwd: projectRoot,
       encoding: "utf8",
-      env: { ...process.env, VERIFY_TRAILS_BREAK: "1" },
-    },
-  );
-  process.stdout.write(breakProbe.stdout || "");
-  process.stderr.write(breakProbe.stderr || "");
-  if (breakProbe.status !== 0) {
-    fail(
-      `verify-map-trails BREAK self-check exited ${breakProbe.status} (must fail when layer removed)`,
-    );
+      env: { ...process.env, ...env },
+    });
+    process.stdout.write(probe.stdout || "");
+    process.stderr.write(probe.stderr || "");
+    if (probe.status !== 0) fail(`${label} exited ${probe.status}`);
+    ok(label);
   }
-  ok("verify-map-trails + BREAK self-check");
-}
-
-section("trail paint payload (__paperPaint / setData LineString)");
-{
-  const paintProbe = spawnSync(
-    "node",
-    [path.join(__dirname, "verify-trail-paint-payload.js")],
-    { cwd: projectRoot, encoding: "utf8", env: process.env },
-  );
-  process.stdout.write(paintProbe.stdout || "");
-  process.stderr.write(paintProbe.stderr || "");
-  if (paintProbe.status !== 0) {
-    fail(`verify-trail-paint-payload exited ${paintProbe.status}`);
-  }
-  const paintBreak = spawnSync(
-    "node",
-    [path.join(__dirname, "verify-trail-paint-payload.js")],
-    {
-      cwd: projectRoot,
-      encoding: "utf8",
-      env: { ...process.env, VERIFY_TRAIL_PAINT_BREAK: "1" },
-    },
-  );
-  process.stdout.write(paintBreak.stdout || "");
-  process.stderr.write(paintBreak.stderr || "");
-  if (paintBreak.status !== 0) {
-    fail(
-      `verify-trail-paint-payload BREAK exited ${paintBreak.status} (must fail when width=0 / setData stripped / features empty)`,
-    );
-  }
-  ok("verify-trail-paint-payload + BREAK (width0 / noSetData / emptyFeatures)");
 }
 
 section("static entry / native config");

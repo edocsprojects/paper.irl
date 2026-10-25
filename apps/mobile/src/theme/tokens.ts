@@ -1,21 +1,27 @@
 import { Platform, TextStyle } from "react-native";
 
-/** Athletic / Strava-adjacent tokens — not purple, not cream brochure. */
+/**
+ * Permanent dark mode — every surface uses the same charcoal glass as the
+ * kill-feed rows (rgba(20,20,20,…)), with white text.
+ */
 export const colors = {
-  ink: "#141414",
-  inkSoft: "#2a2a2a",
-  muted: "#6b7280",
-  paper: "#ffffff",
-  mapWash: "#dfe5ea",
-  line: "rgba(20,20,20,0.08)",
+  ink: "#f3f4f6",
+  inkSoft: "#d1d5db",
+  muted: "#9ca3af",
+  paper: "rgba(20,20,20,0.92)",
+  panel: "rgba(20,20,20,0.82)",
+  field: "rgba(255,255,255,0.06)",
+  mapWash: "#111417",
+  line: "rgba(255,255,255,0.08)",
+  danger: "#ef4444",
   accent: "#e85d04",
   accentDeep: "#c2410c",
   good: "#166534",
   bad: "#991b1b",
   warn: "#92400e",
-  overlay: "rgba(20,24,28,0.42)",
-  loadingTop: "#1a2229",
-  loadingBottom: "#3d4a55",
+  overlay: "rgba(8,10,12,0.6)",
+  loadingTop: "#0d1013",
+  loadingBottom: "#1b2026",
 } as const;
 
 export const fonts = {

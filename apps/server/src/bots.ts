@@ -20,19 +20,16 @@ function randFor(code: string): () => number {
   return r;
 }
 
-/** Fill seats with BotN up to maxSeats - leaveHumanSlots bots. */
+/** Fill seats with simulated "Player N" (N = seat number) up to maxSeats - leaveHumanSlots. */
 export function fillBots(lobby: LobbyState, leaveHumanSlots = 1): number {
   let added = 0;
-  let n = 1;
   const botCap = lobby.maxSeats - leaveHumanSlots;
   while (lobby.seats.size < lobby.maxSeats) {
     const humanCount = [...lobby.seats.values()].filter((s) => !seatIsBot(s)).length;
     const botCount = lobby.seats.size - humanCount;
     if (botCount >= botCap) break;
-    while ([...lobby.seats.values()].some((s) => s.nickname === `Bot${n}`)) n++;
-    joinLobby(lobby, `Bot${n}`);
+    joinLobby(lobby, `Player ${lobby.nextSeatId}`, { bot: true });
     added++;
-    n++;
   }
   return added;
 }

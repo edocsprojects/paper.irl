@@ -8,6 +8,16 @@ export const TEST_LOCATION = {
   lon: -93.23256,
 } as const;
 
+/** MultiPolygon: polygons → [outer ring, ...holes], rings closed. */
+export type Territory = LatLon[][][];
+
+export type DeathInfo = {
+  byId: number;
+  reason: "cut" | "captured";
+  atMs: number;
+  at?: LatLon | null;
+};
+
 export type SeatView = {
   id: number;
   nickname: string;
@@ -15,9 +25,12 @@ export type SeatView = {
   color: string;
   areaM2: number;
   trail: LatLon[];
-  owned: LatLon[][];
+  owned: Territory;
   position: LatLon | null;
   respawnAt: LatLon | null;
+  ghostUntilMs?: number | null;
+  bot?: boolean;
+  lastDeath?: DeathInfo | null;
 };
 
 export type LobbyPayload = {
@@ -33,16 +46,34 @@ export type LobbyPayload = {
     centerLat: number;
     centerLon: number;
     radiusM: number;
+    starterRadiusM?: number;
   };
+  /** Server clock at payload time (ghost countdown without clock skew). */
+  serverNowMs?: number;
   seats: SeatView[];
   top3: SeatView[];
   rematchReady?: number[];
+  /** Recent eliminations, newest last. */
+  feed?: FeedEntry[];
+  /** Land-taken notices, newest last (includes bot-loop steals). */
+  notices?: { atMs: number; kind: "landLost"; seatId: number; byId: number; lostM2: number }[];
+  /** Recent (re)spawns, newest last. */
+  pops?: { atMs: number; seatId: number; at: LatLon }[];
+};
+
+export type FeedEntry = {
+  atMs: number;
+  victimId: number;
+  byId: number;
+  reason: DeathInfo["reason"];
+  at: LatLon | null;
 };
 
 /** Subset of server @paper-irl/rules Effect kinds used for snackbars. */
 export type GameEffect =
   | { kind: "banked"; seatId: number }
-  | { kind: "cut"; victimId: number; byId: number }
+  | { kind: "cut"; victimId: number; byId: number; reason?: DeathInfo["reason"] }
+  | { kind: "landLost"; seatId: number; byId: number; lostM2: number }
   | { kind: "boundaryPush"; seatId: number }
   | { kind: string; [k: string]: unknown };
 
@@ -54,6 +85,7 @@ export type CreateLobbyOpts = {
   radiusM?: number;
   centerLat?: number;
   centerLon?: number;
+  speedScale?: number;
 };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -104,6 +136,7 @@ export const api = {
         radiusM: opts.radiusM ?? 500,
         centerLat: opts.centerLat ?? TEST_LOCATION.lat,
         centerLon: opts.centerLon ?? TEST_LOCATION.lon,
+        speedScale: opts.speedScale ?? 1,
       }),
     }),
   join: (code: string, nickname: string) =>

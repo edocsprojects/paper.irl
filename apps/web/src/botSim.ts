@@ -15,6 +15,7 @@ import {
   type LatLon,
   type LobbyState,
   type Seat,
+  type Territory,
 } from "@paper-irl/rules";
 
 export const YOU_ID = 1;
@@ -40,7 +41,7 @@ export interface SimSnapshotSeat {
   lat: number;
   lon: number;
   trail: LatLon[];
-  owned: LatLon[][];
+  owned: Territory;
   respawnAt: LatLon | null;
 }
 
@@ -108,7 +109,7 @@ function wanderStep(
 
   if (opts.protectYou && seat.id === YOU_ID && seat.mode === "safe" && seat.owned[0]) {
     // Stay near starter during protect
-    const c = seat.owned[0][0]!;
+    const c = seat.owned[0]![0]![0]!;
     const local = toLocalM(c.lat, c.lon, pos.lat, pos.lon);
     if (Math.hypot(local.x, local.y) > 12) {
       heading = Math.atan2(-local.y, -local.x) + (rand() - 0.5) * 0.4;
@@ -131,7 +132,7 @@ function wanderStep(
       heading += (rand() - 0.5) * 1.0;
     }
   } else if (seat.mode === "trailing" && rand() < opts.homeBias && seat.owned[0]) {
-    const home = seat.owned[0][0]!;
+    const home = seat.owned[0]![0]![0]!;
     const local = toLocalM(pos.lat, pos.lon, home.lat, home.lon);
     heading = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.7;
   } else {
@@ -369,7 +370,7 @@ export class CampusSim {
         lat,
         lon,
         trail: seat.trail.map((p) => ({ ...p })),
-        owned: seat.owned.map((ring) => ring.map((p) => ({ ...p }))),
+        owned: seat.owned.map((poly) => poly.map((ring) => ring.map((p) => ({ ...p })))),
         respawnAt: seat.respawnAt ? { ...seat.respawnAt } : null,
       };
     });

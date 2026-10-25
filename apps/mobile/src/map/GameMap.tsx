@@ -2,12 +2,13 @@ import { useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { WebView } from "react-native-webview";
 import { buildMapHtml, MAP_HTML_REVISION } from "./mapHtml";
-import { buildPaperPaintMessage } from "./paintPayload";
+import { buildPaperPaintMessage, type ZoomMode } from "./paintPayload";
 import type { LobbyPayload } from "../lib/api";
 
 type Props = {
   lobby: LobbyPayload;
   youId: number;
+  zoomMode: ZoomMode;
 };
 
 export function mapFingerprint(lobby: LobbyPayload, youId: number): string {
@@ -41,25 +42,27 @@ function pushState(webRef: WebView | null, json: string) {
 }
 
 /** Street-map WebView — labels stripped; HUD is RN. */
-export function GameMap({ lobby, youId }: Props) {
+export function GameMap({ lobby, youId, zoomMode }: Props) {
   const ref = useRef<WebView>(null);
   const lastFp = useRef("");
   const ready = useRef(false);
   const lobbyRef = useRef(lobby);
   const youRef = useRef(youId);
+  const zoomRef = useRef(zoomMode);
   lobbyRef.current = lobby;
   youRef.current = youId;
+  zoomRef.current = zoomMode;
 
   useEffect(() => {
-    const fp = mapFingerprint(lobby, youId);
+    const fp = `${zoomMode}#${mapFingerprint(lobby, youId)}`;
     if (fp === lastFp.current) return;
     lastFp.current = fp;
     if (!ready.current) return;
     pushState(
       ref.current,
-      JSON.stringify(buildPaperPaintMessage(lobby, youId)),
+      JSON.stringify(buildPaperPaintMessage(lobby, youId, zoomMode)),
     );
-  }, [lobby, youId]);
+  }, [lobby, youId, zoomMode]);
 
   return (
     <WebView
@@ -75,13 +78,19 @@ export function GameMap({ lobby, youId }: Props) {
       onMessage={(ev) => {
         try {
           const msg = JSON.parse(ev.nativeEvent.data);
-          if (msg.type === "ready") {
+          if (msg.type === "error") {
+            console.warn("[map] error:", msg.message);
+          } else if (msg.type === "paint") {
+            console.log(
+              `[map] rev ${msg.rev} trails layer ${msg.trailsLayer ? "ok" : "MISSING"} visible=${msg.trailVisible} features=${msg.trailFeatures}`,
+            );
+          } else if (msg.type === "ready") {
             ready.current = true;
-            lastFp.current = mapFingerprint(lobbyRef.current, youRef.current);
+            lastFp.current = `${zoomRef.current}#${mapFingerprint(lobbyRef.current, youRef.current)}`;
             pushState(
               ref.current,
               JSON.stringify(
-                buildPaperPaintMessage(lobbyRef.current, youRef.current),
+                buildPaperPaintMessage(lobbyRef.current, youRef.current, zoomRef.current),
               ),
             );
           }
@@ -94,5 +103,5 @@ export function GameMap({ lobby, youId }: Props) {
 }
 
 const styles = StyleSheet.create({
-  map: { flex: 1, backgroundColor: "#dfe5ea" },
+  map: { flex: 1, backgroundColor: "#111417" },
 });

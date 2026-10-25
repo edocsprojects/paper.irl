@@ -1,16 +1,23 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 10;
+export const MAP_HTML_REVISION = 20;
 
 /**
- * Sentinels for verify-map-trails.js — must stay in the loaded HTML.
+ * Sentinel kept in the loaded HTML (grep-able in Safari Web Inspector).
  * TRAIL_LAYER_OK proves the visible trail polyline layer ships to the client.
  */
 export const TRAIL_RENDER_SENTINEL = "TRAIL_LAYER_OK";
 
 /**
  * Street basemap (OpenFreeMap) — labels stripped.
- * Trails: dedicated source ABOVE fills, white casing + dark/high-contrast stroke
- * (reads on grey roads). State arrives via window.__paperPaint (injectJavaScript).
+ * Paper.io look: each player's base colour drives four shades — solid zone
+ * fill, darker zone rim, lighter trail, dark trail edge — over a washed-out
+ * basemap. Dots glide between server updates; the camera rides your dot.
+ * State arrives via window.__paperPaint (injectJavaScript).
+ *
+ * NOTE: line-cap / line-join are LAYOUT properties. Putting them in `paint`
+ * makes MapLibre's addLayer validation reject the whole layer. And declutter
+ * must skip OWN_LAYERS: its /rail/ basemap filter matches "trails" and used
+ * to hide them on every styledata event (rev ≤11: trails never visible).
  */
 export function buildMapHtml(): string {
   return `<!doctype html>
@@ -20,18 +27,18 @@ export function buildMapHtml(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
 <style>
-  html,body,#map{margin:0;height:100%;width:100%;background:#dfe5ea;touch-action:none}
+  html,body,#map{margin:0;height:100%;width:100%;background:#111417;touch-action:none}
   .maplibregl-ctrl-attrib{
     font:500 9px/1.2 Avenir Next,system-ui,sans-serif !important;
-    background:rgba(255,255,255,.45) !important;
-    color:#555 !important;
+    background:rgba(20,20,20,.55) !important;
+    color:#8b95a1 !important;
     padding:1px 5px !important;
     margin:0 4px 4px 0 !important;
     border-radius:2px !important;
     max-width:42vw;
     box-shadow:none !important;
   }
-  .maplibregl-ctrl-attrib a{color:#666 !important}
+  .maplibregl-ctrl-attrib a{color:#8b95a1 !important}
   .maplibregl-ctrl-logo{display:none !important}
   .maplibregl-ctrl-bottom-left{display:none !important}
 </style>
@@ -42,29 +49,89 @@ export function buildMapHtml(): string {
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const STYLE='https://tiles.openfreemap.org/styles/bright';
-const PLAY_ZOOM=15.55;
-const CAM_LERP=0.12;
-const DOT_LERP=0.22;
-/** High-contrast trail core — not road grey (#ccc/#eee). */
+let PLAY_ZOOM=17;
+/** 'arena' = fit the whole circle; 'close' = street-level around you. */
+let zoomMode='arena';
+const CLOSE_ZOOM=17.6;
+/** Zoom that fits the arena's diameter across the screen (clamped for walking). */
+function zoomFor(arena){
+  const w=Math.max(280,(window.innerWidth||390));
+  const mPerPx=(arena.radiusM*2*1.05)/w;
+  const z=Math.log2(156543.03392*Math.cos(arena.centerLat*Math.PI/180)/mPerPx);
+  return Math.max(15,Math.min(17.5,z));
+}
+/** Trail line widths (px): light core over a dark edge, paper.io style. */
+const TRAIL_CORE_WIDTH=6;
+const TRAIL_CASE_WIDTH=10;
+/** Fallback trail colour when a feature has none. */
 const TRAIL_CORE='#111111';
-const TRAIL_CORE_WIDTH=5.5;
-const TRAIL_CASE='#ffffff';
-const TRAIL_CASE_WIDTH=9;
 let map, ready=false;
 let lastFp='';
-let cam={lon:-93.23256,lat:44.97452,zoom:PLAY_ZOOM};
-let target={lon:-93.23256,lat:44.97452};
-let camRunning=false;
-let boundaryDrawn=false;
+let camKey='';
+let boundaryKey='';
 const seatsLive={};
 let rafOn=false;
 let lastState=null;
+let lastReport='';
+/** Death bursts: [{atMs,lat,lon,color}] on the server clock; clockSkew maps to local. */
+let deaths=[];
+let pops=[];
+let clockSkew=0;
+const DEATH_MS=2600;
+const POP_MS=900;
+/** Metres → screen px at the play zoom (for the spawn pop). */
+function mToPx(m,lat){ return m/(156543.03392*Math.cos(lat*Math.PI/180)/Math.pow(2,PLAY_ZOOM)); }
+const nowMs=()=>(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
 
-function post(msg){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }
-function darken(hex,a){const h=hex.replace('#','');const n=parseInt(h.length===3?h.split('').map(c=>c+c).join(''):h,16);
-  const r=Math.max(0,((n>>16)&255)*(1-a)),g=Math.max(0,((n>>8)&255)*(1-a)),b=Math.max(0,(n&255)*(1-a));
-  return 'rgb('+Math.round(r)+','+Math.round(g)+','+Math.round(b)+')';}
-function ringCoords(ring){return (ring||[]).map(p=>[p.lon,p.lat]);}
+function post(msg){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }catch(e){} }
+window.onerror=function(m){ post({type:'error',message:String(m)}); };
+
+/* ── paper.io palette: one base colour → fill / border / trail / trail edge ── */
+function rgb(hex){const h=String(hex||'#888888').replace('#','');const f=h.length===3?h.split('').map(c=>c+c).join(''):h;const n=parseInt(f,16);return [(n>>16)&255,(n>>8)&255,n&255];}
+function mix(hex,to,t){const a=rgb(hex);return 'rgb('+a.map((v,i)=>Math.round(v+(to[i]-v)*t)).join(',')+')';}
+const palCache={};
+function palette(hex){
+  if(!palCache[hex]) palCache[hex]={
+    fill:hex,
+    border:mix(hex,[255,255,255],0.18),
+    lip:mix(hex,[0,0,0],0.45),
+    trail:mix(hex,[255,255,255],0.3),
+    trailEdge:mix(hex,[0,0,0],0.55),
+    head:hex
+  };
+  return palCache[hex];
+}
+
+/** Chaikin corner-cutting: GPS-jagged edges → soft paper.io curves (visual only). */
+function chaikinRing(ring,iters){
+  let pts=ring.slice(0,-1);
+  if(pts.length<3) return ring;
+  for(let it=0;it<iters;it++){
+    const out=[];
+    for(let i=0;i<pts.length;i++){
+      const a=pts[i],b=pts[(i+1)%pts.length];
+      out.push([a[0]*0.75+b[0]*0.25,a[1]*0.75+b[1]*0.25],[a[0]*0.25+b[0]*0.75,a[1]*0.25+b[1]*0.75]);
+    }
+    pts=out;
+  }
+  pts.push(pts[0]);
+  return pts;
+}
+function chaikinLine(line,iters){
+  let pts=line;
+  if(pts.length<3) return pts;
+  for(let it=0;it<iters;it++){
+    const out=[pts[0]];
+    for(let i=0;i<pts.length-1;i++){
+      const a=pts[i],b=pts[i+1];
+      out.push([a[0]*0.75+b[0]*0.25,a[1]*0.75+b[1]*0.25],[a[0]*0.25+b[0]*0.75,a[1]*0.25+b[1]*0.75]);
+    }
+    out.push(pts[pts.length-1]);
+    pts=out;
+  }
+  return pts;
+}
+
 function circleRing(center,radiusM,steps){
   const out=[];
   const mLat=111320;
@@ -75,17 +142,40 @@ function circleRing(center,radiusM,steps){
   }
   return out;
 }
+/** Our game layers — never touched by declutter ("trails" contains "rail"!). */
+const OWN_LAYERS={'boundary':1,'owned-shadow':1,'owned-fill':1,'owned-border':1,'trails-casing':1,'trails':1,'spawn-fill':1,'spawn-ring':1,'pops':1,'deaths':1,'markers':1,'players':1};
+const faded={};
+/** Strip labels/transit and wash the basemap out so player colours pop. */
 function declutter(){
   const layers=(map.getStyle()&&map.getStyle().layers)||[];
   for(const layer of layers){
+    if(OWN_LAYERS[layer.id]) continue;
     const id=(layer.id||'').toLowerCase();
-    if(layer.type==='symbol'){
+    if(layer.type==='symbol' || /label|place|poi|transit|bus|rail|ferry|airport|housenumber|water_name|road_name|shield|station/.test(id)){
       try{ map.setLayoutProperty(layer.id,'visibility','none'); }catch(e){}
       continue;
     }
-    if(/label|place|poi|transit|bus|rail|ferry|airport|housenumber|water_name|road_name|shield|station/.test(id)){
-      try{ map.setLayoutProperty(layer.id,'visibility','none'); }catch(e){}
-    }
+    if(faded[layer.id]) continue;
+    faded[layer.id]=1;
+    // Permanent dark mode: recolour the street basemap to quiet charcoal tones.
+    try{
+      if(layer.type==='background') map.setPaintProperty(layer.id,'background-color','#121518');
+      else if(layer.type==='fill'){
+        const c=/water|ocean|lake|river/.test(id)?'#0e1a24'
+          :/park|grass|wood|forest|landcover|green|garden|pitch/.test(id)?'#141d18'
+          :/building/.test(id)?'#1b1f24':'#16191d';
+        map.setPaintProperty(layer.id,'fill-color',c);
+        map.setPaintProperty(layer.id,'fill-opacity',1);
+        try{ map.setPaintProperty(layer.id,'fill-outline-color',c); }catch(e){}
+      }
+      else if(layer.type==='line'){
+        const c=/water|river|stream/.test(id)?'#0e1a24':/boundary|admin/.test(id)?'#16191d'
+          :/path|foot|track|cycle|steps/.test(id)?'#22272d':'#2a3037';
+        map.setPaintProperty(layer.id,'line-color',c);
+        map.setPaintProperty(layer.id,'line-opacity',0.9);
+      }
+      else if(layer.type==='fill-extrusion') map.setLayoutProperty(layer.id,'visibility','none');
+    }catch(e){}
   }
 }
 function seatFp(seats){
@@ -95,46 +185,26 @@ function seatFp(seats){
     return [s.id,s.mode,Math.round(s.areaM2||0),(s.trail||[]).length,(s.owned||[]).length,
       p?p.lat.toFixed(6)+','+p.lon.toFixed(6):'',
       tip?tip.lat.toFixed(6)+','+tip.lon.toFixed(6):'',
-      s.respawnAt?s.respawnAt.lat.toFixed(6):''].join(':');
+      s.respawnAt?s.respawnAt.lat.toFixed(6)+','+s.respawnAt.lon.toFixed(6):''].join(':');
   }).join('|');
 }
 function fingerprint(state){
   return (state.arena&&state.arena.id)+'#'+seatFp(state.seats);
 }
-function tickCam(){
-  camRunning=true;
-  cam.lon += (target.lon-cam.lon)*CAM_LERP;
-  cam.lat += (target.lat-cam.lat)*CAM_LERP;
-  const dLon=Math.abs(target.lon-cam.lon);
-  const dLat=Math.abs(target.lat-cam.lat);
-  map.jumpTo({center:[cam.lon,cam.lat],zoom:PLAY_ZOOM});
-  if(dLon>1e-7||dLat>1e-7) requestAnimationFrame(tickCam);
-  else{
-    cam.lon=target.lon; cam.lat=target.lat;
-    map.jumpTo({center:[cam.lon,cam.lat],zoom:PLAY_ZOOM});
-    camRunning=false;
-  }
-}
-function followYou(you){
-  const p=you&&(you.position||you.respawnAt);
-  if(!p) return;
-  target={lon:p.lon,lat:p.lat};
-  if(!camRunning) requestAnimationFrame(tickCam);
-}
 
-function trailCoords(live){
-  const base=(live.trail||[]).map(p=>[p.lon,p.lat]);
-  if(live.mode!=='trailing' && base.length<1) return null;
-  const tip=[live.lon,live.lat];
-  if(base.length===0) return null;
-  if(base.length===1){
-    const a=base[0];
-    if(Math.abs(a[0]-tip[0])<1e-9 && Math.abs(a[1]-tip[1])<1e-9) return null;
-    return [a, tip];
+/** Camera rides the smoothed "you" dot every frame (no separate lag/lerp). */
+function followYou(){
+  let c=null;
+  for(const id of Object.keys(seatsLive)){
+    const l=seatsLive[id];
+    if(l.you){ c=l.hasPos?[l.lon,l.lat]:(l.markerLon!=null?[l.markerLon,l.markerLat]:[l.lon,l.lat]); break; }
   }
-  const last=base[base.length-1];
-  if(Math.abs(last[0]-tip[0])<1e-9 && Math.abs(last[1]-tip[1])<1e-9) return base;
-  return base.concat([tip]);
+  if(!c && lastState && lastState.arena) c=[lastState.arena.centerLon,lastState.arena.centerLat];
+  if(!c) return;
+  const key=c[0].toFixed(7)+','+c[1].toFixed(7);
+  if(key===camKey) return;
+  camKey=key;
+  map.jumpTo({center:c,zoom:PLAY_ZOOM});
 }
 
 function ensureTrailLayers(){
@@ -146,12 +216,11 @@ function ensureTrailLayers(){
       id:'trails-casing',
       type:'line',
       source:'trails',
+      layout:{'line-cap':'round','line-join':'round'},
       paint:{
-        'line-color':TRAIL_CASE,
-        'line-opacity':1,
-        'line-width':TRAIL_CASE_WIDTH,
-        'line-cap':'round',
-        'line-join':'round'
+        'line-color':['coalesce',['get','edge'],TRAIL_CORE],
+        'line-opacity':0.9,
+        'line-width':TRAIL_CASE_WIDTH
       }
     });
   }
@@ -161,77 +230,123 @@ function ensureTrailLayers(){
       id:'trails',
       type:'line',
       source:'trails',
+      layout:{'line-cap':'round','line-join':'round'},
       paint:{
-        'line-color':TRAIL_CORE,
+        'line-color':['coalesce',['get','trail'],TRAIL_CORE],
         'line-opacity':1,
-        'line-width':TRAIL_CORE_WIDTH,
-        'line-cap':'round',
-        'line-join':'round'
+        'line-width':TRAIL_CORE_WIDTH
       }
     });
   }
+}
+
+function reportPaint(trailCount){
+  const ok=!!(map.getLayer('trails')&&map.getLayer('trails-casing'));
+  const key=ok+':'+trailCount;
+  if(key===lastReport) return;
+  lastReport=key;
+  post({type:'paint',rev:${MAP_HTML_REVISION},trailsLayer:ok,trailVisible:map.getLayoutProperty('trails','visibility')!=='none',trailFeatures:trailCount});
 }
 
 function flushLayers(){
   if(!ready||!map.getSource('players')||!map.getSource('owned')||!lastState) return;
   ensureTrailLayers();
+  const youId=(Object.values(seatsLive).find(l=>l.you)||{}).id;
   const owned={type:'FeatureCollection',features:[]};
-  /* Prefer RN-built trail FeatureCollection (buildTrailPaint) when present. */
-  const trails=(lastState&&lastState.trails&&lastState.trails.type==='FeatureCollection')
-    ? lastState.trails
-    : {type:'FeatureCollection',features:[]};
+  const terr=lastState.territory&&lastState.territory.type==='FeatureCollection'?lastState.territory.features:[];
+  for(const f of terr){
+    const pal=palette(f.properties.color);
+    const rings=f.geometry.coordinates.map(r=>r.length>=4?chaikinRing(r,2):r);
+    owned.features.push({type:'Feature',properties:{fill:pal.fill,border:pal.border,lip:pal.lip,you:f.properties.seatId===youId},geometry:{type:'Polygon',coordinates:rings}});
+  }
+  /* RN builds the trail FeatureCollection (buildTrailPaint); extend each line
+     to the animated dot so the trail never lags behind the player. */
+  const src=(lastState.trails&&lastState.trails.type==='FeatureCollection')?lastState.trails.features:[];
+  const trails={type:'FeatureCollection',features:[]};
+  for(const f of src){
+    const coords=f.geometry.coordinates.slice();
+    const live=seatsLive[f.properties.seatId];
+    if(live && live.mode==='trailing' && coords.length){
+      coords[coords.length-1]=[live.lon,live.lat];
+    }
+    const pal=palette(f.properties.color);
+    // Smooth everything but the live tip so the line still meets the dot exactly.
+    const smooth=coords.length>=3?chaikinLine(coords,2):coords;
+    if(smooth.length>=2) trails.features.push({type:'Feature',properties:{seatId:f.properties.seatId,trail:pal.trail,edge:pal.trailEdge},geometry:{type:'LineString',coordinates:smooth}});
+  }
   const players={type:'FeatureCollection',features:[]};
+  const spawn={type:'FeatureCollection',features:[]};
+  const starterR=(lastState.arena&&lastState.arena.starterRadiusM)||22;
   for(const id of Object.keys(seatsLive)){
     const live=seatsLive[id];
-    const border=darken(live.color,0.22);
-    for(const ring of (live.owned||[])){
-      if(!ring||ring.length<3) continue;
-      const coords=ringCoords(ring);
-      if(coords.length&&(coords[0][0]!==coords[coords.length-1][0]||coords[0][1]!==coords[coords.length-1][1])){
-        coords.push(coords[0]);
-      }
-      owned.features.push({type:'Feature',properties:{fill:live.color,border},geometry:{type:'Polygon',coordinates:[coords]}});
+    const pal=palette(live.color);
+    if(live.hasPos){
+      players.features.push({
+        type:'Feature',
+        properties:{color:pal.head,edge:pal.border,you:!!live.you,mode:live.mode||'player'},
+        geometry:{type:'Point',coordinates:[live.lon,live.lat]}
+      });
     }
-    if(!(lastState&&lastState.trails&&lastState.trails.type==='FeatureCollection')){
-      const tc=trailCoords(live);
-      if(tc && tc.length>=2){
-        trails.features.push({
-          type:'Feature',
-          properties:{kind:'trail',seatId:live.id||id},
-          geometry:{type:'LineString',coordinates:tc}
-        });
-      }
-    }
-    players.features.push({
-      type:'Feature',
-      properties:{color:live.color,you:!!live.you,mode:live.mode||'player'},
-      geometry:{type:'Point',coordinates:[live.lon,live.lat]}
-    });
     if(live.markerLon!=null){
       players.features.push({
         type:'Feature',
-        properties:{color:live.color,you:!!live.you,mode:'marker'},
+        properties:{color:pal.head,edge:pal.border,you:!!live.you,mode:'marker'},
         geometry:{type:'Point',coordinates:[live.markerLon,live.markerLat]}
       });
+      // Respawn zone for every waiting player: walk in → back in the game.
+      spawn.features.push({type:'Feature',properties:{color:pal.border,fill:pal.fill,you:!!live.you},
+        geometry:{type:'Polygon',coordinates:[circleRing({lat:live.markerLat,lon:live.markerLon},starterR,48)]}});
     }
   }
   map.getSource('owned').setData(owned);
   map.getSource('trails').setData(trails);
+  map.getSource('spawn').setData(spawn);
   map.getSource('players').setData(players);
-  // Expose for DOM/source assertions in Simulator debugging
+  const nowS=Date.now()+clockSkew;
+  const burst={type:'FeatureCollection',features:[]};
+  for(const d of deaths){
+    const age=nowS-d.atMs;
+    if(age<0||age>DEATH_MS) continue;
+    const k=age/DEATH_MS;
+    burst.features.push({type:'Feature',properties:{color:d.color,r:10+46*k,o:1-k},geometry:{type:'Point',coordinates:[d.lon,d.lat]}});
+  }
+  map.getSource('deaths').setData(burst);
+  const popFc={type:'FeatureCollection',features:[]};
+  for(const p of pops){
+    const age=nowS-p.atMs;
+    if(age<0||age>POP_MS) continue;
+    const k=age/POP_MS;
+    const ease=1-Math.pow(1-k,3);
+    popFc.features.push({type:'Feature',properties:{color:palette(p.color).trail,r:mToPx(starterR*1.15,p.lat)*ease,o:0.75*(1-k)},geometry:{type:'Point',coordinates:[p.lon,p.lat]}});
+  }
+  map.getSource('pops').setData(popFc);
+  // Exposed for Simulator / harness assertions.
   window.__paperTrailFeatureCount=trails.features.length;
+  reportPaint(trails.features.length);
 }
 
+function deathsActive(){
+  const nowS=Date.now()+clockSkew;
+  return deaths.some(d=>nowS-d.atMs>=0&&nowS-d.atMs<=DEATH_MS) ||
+    pops.some(p=>nowS-p.atMs>=0&&nowS-p.atMs<=POP_MS);
+}
+/**
+ * Time-based glide: each dot moves from where it is drawn to its newest
+ * server position over ~one update interval, so motion is continuous
+ * instead of snap-and-stop between polls.
+ */
 function tickFrame(){
   rafOn=true;
-  let moving=false;
+  const t=nowMs();
+  let moving=deathsActive();
   for(const id of Object.keys(seatsLive)){
     const d=seatsLive[id];
-    d.lon += (d.tLon-d.lon)*DOT_LERP;
-    d.lat += (d.tLat-d.lat)*DOT_LERP;
-    if(Math.abs(d.tLon-d.lon)>2e-8||Math.abs(d.tLat-d.lat)>2e-8) moving=true;
-    else{ d.lon=d.tLon; d.lat=d.tLat; }
+    const k=d.dur>0?Math.min(1,(t-d.t0)/d.dur):1;
+    d.lon=d.fLon+(d.tLon-d.fLon)*k;
+    d.lat=d.fLat+(d.tLat-d.fLat)*k;
+    if(k<1) moving=true;
   }
+  followYou();
   flushLayers();
   if(moving) requestAnimationFrame(tickFrame);
   else rafOn=false;
@@ -239,28 +354,38 @@ function tickFrame(){
 
 function syncSeats(seats){
   const seen={};
+  const t=nowMs();
   for(const seat of seats||[]){
     const pos=seat.position||seat.respawnAt;
     if(!pos) continue;
     seen[seat.id]=1;
     const prev=seatsLive[seat.id];
-    if(!prev){
+    const marker=seat.respawnAt&&(seat.mode==='toPlant'||seat.mode==='joining'||seat.mode==='ghost')?seat.respawnAt:null;
+    // Snap (don't glide) on first sight / respawn / big GPS jumps.
+    const jump=prev&&(Math.abs(prev.tLat-pos.lat)>0.0005||Math.abs(prev.tLon-pos.lon)>0.0007);
+    if(!prev||jump){
       seatsLive[seat.id]={
         id:seat.id,
-        lon:pos.lon,lat:pos.lat,tLon:pos.lon,tLat:pos.lat,
+        lon:pos.lon,lat:pos.lat,fLon:pos.lon,fLat:pos.lat,tLon:pos.lon,tLat:pos.lat,
+        t0:t,dur:0,lastAt:t,
+        hasPos:!!seat.position,
         color:seat.color,you:!!seat.you,mode:seat.mode||'player',
-        trail:(seat.trail||[]).map(p=>({lat:p.lat,lon:p.lon})),
-        owned:seat.owned||[],
-        markerLon:seat.respawnAt?seat.respawnAt.lon:null,
-        markerLat:seat.respawnAt?seat.respawnAt.lat:null
+        markerLon:marker?marker.lon:null,
+        markerLat:marker?marker.lat:null
       };
     }else{
-      prev.tLon=pos.lon; prev.tLat=pos.lat;
+      if(prev.tLon!==pos.lon||prev.tLat!==pos.lat){
+        const gap=t-prev.lastAt;
+        prev.fLon=prev.lon; prev.fLat=prev.lat;
+        prev.tLon=pos.lon; prev.tLat=pos.lat;
+        prev.t0=t;
+        prev.dur=Math.max(120,Math.min(900,gap*1.1));
+        prev.lastAt=t;
+      }
+      prev.hasPos=!!seat.position;
       prev.color=seat.color; prev.you=!!seat.you; prev.mode=seat.mode||'player';
-      prev.trail=(seat.trail||[]).map(p=>({lat:p.lat,lon:p.lon}));
-      prev.owned=seat.owned||[];
-      prev.markerLon=seat.respawnAt?seat.respawnAt.lon:null;
-      prev.markerLat=seat.respawnAt?seat.respawnAt.lat:null;
+      prev.markerLon=marker?marker.lon:null;
+      prev.markerLat=marker?marker.lat:null;
     }
   }
   for(const id of Object.keys(seatsLive)){
@@ -273,23 +398,36 @@ function syncSeats(seats){
 function paint(state){
   if(!ready||!state||!state.arena) return;
   lastState=state;
-  const fp=fingerprint(state);
-  const you=(state.seats||[]).find(s=>s.you);
-  if(fp===lastFp){
-    followYou(you);
-    return;
+  const zm=state.zoomMode==='close'?'close':'arena';
+  const wantZoom=zm==='close'?CLOSE_ZOOM:zoomFor(state.arena);
+  if(zm!==zoomMode||Math.abs(wantZoom-PLAY_ZOOM)>1e-6){
+    zoomMode=zm; PLAY_ZOOM=wantZoom; camKey='';
+    if(Object.keys(seatsLive).length) followYou();
   }
+  if(state.serverNowMs) clockSkew=state.serverNowMs-Date.now();
+  const nd=state.deaths||[];
+  const newest=nd.length?nd[nd.length-1].atMs:0;
+  const had=deaths.length?deaths[deaths.length-1].atMs:0;
+  deaths=nd;
+  const np=state.pops||[];
+  const newestPop=np.length?np[np.length-1].atMs:0;
+  const hadPop=pops.length?pops[pops.length-1].atMs:0;
+  pops=np;
+  if((newest!==had||newestPop!==hadPop) && !rafOn) requestAnimationFrame(tickFrame);
+  const fp=fingerprint(state);
+  if(fp===lastFp) return;
   lastFp=fp;
   const arena=state.arena;
-  if(!boundaryDrawn){
+  const bKey=arena.centerLat+','+arena.centerLon+','+arena.radiusM;
+  if(bKey!==boundaryKey){
     const boundary={type:'FeatureCollection',features:[{
-      type:'Feature',properties:{},geometry:{type:'LineString',coordinates:circleRing({lat:arena.centerLat,lon:arena.centerLon},arena.radiusM,64)}
+      type:'Feature',properties:{},geometry:{type:'LineString',coordinates:circleRing({lat:arena.centerLat,lon:arena.centerLon},arena.radiusM,128)}
     }]};
     map.getSource('boundary').setData(boundary);
-    boundaryDrawn=true;
+    boundaryKey=bKey;
   }
   syncSeats(state.seats||[]);
-  followYou(you);
+  followYou();
 }
 
 /** RN injectJavaScript entry — more reliable than postMessage on iOS HTML WebViews. */
@@ -297,13 +435,13 @@ window.__paperPaint=function(msg){
   try{
     const m=typeof msg==='string'?JSON.parse(msg):msg;
     if(m && m.type==='state') paint(m.state);
-  }catch(err){}
+  }catch(err){ post({type:'error',message:'paint: '+String(err)}); }
 };
 
 map=new maplibregl.Map({
   container:'map',
   style:STYLE,
-  center:[cam.lon,cam.lat],
+  center:[-93.23256,44.97452],
   zoom:PLAY_ZOOM,
   attributionControl:{compact:true,customAttribution:'© OpenStreetMap'},
   dragPan:false,
@@ -314,18 +452,29 @@ map=new maplibregl.Map({
   touchZoomRotate:false,
   keyboard:false
 });
+map.on('error',(e)=>{ post({type:'error',message:String((e&&e.error&&e.error.message)||e)}); });
 map.on('load',()=>{
   declutter();
   map.addSource('boundary',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'boundary',type:'line',source:'boundary',paint:{'line-color':'#1b1b1b','line-opacity':0.45,'line-width':2,'line-dasharray':[2,1.4]}});
+  map.addLayer({id:'boundary',type:'line',source:'boundary',layout:{'line-join':'round'},paint:{'line-color':'#8b95a1','line-opacity':0.75,'line-width':2.5,'line-dasharray':[2.5,1.5]}});
   map.addSource('owned',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'owned-fill',type:'fill',source:'owned',paint:{'fill-color':['get','fill'],'fill-opacity':0.34}});
-  map.addLayer({id:'owned-border',type:'line',source:'owned',paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.4}});
+  // paper.io look: solid colour slab with a darker "lip" just below it (3D),
+  // and a thin lighter rim. Your own land gets a slightly bolder rim.
+  map.addLayer({id:'owned-shadow',type:'fill',source:'owned',paint:{'fill-color':['get','lip'],'fill-opacity':1,'fill-translate':[0,5],'fill-antialias':true}});
+  map.addLayer({id:'owned-fill',type:'fill',source:'owned',paint:{'fill-color':['get','fill'],'fill-opacity':1,'fill-antialias':true}});
+  map.addLayer({id:'owned-border',type:'line',source:'owned',layout:{'line-join':'round'},paint:{'line-color':['get','border'],'line-opacity':0.9,'line-width':['case',['get','you'],2.5,1.5]}});
   ensureTrailLayers();
+  map.addSource('spawn',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'spawn-fill',type:'fill',source:'spawn',paint:{'fill-color':['get','fill'],'fill-opacity':['case',['get','you'],0.28,0.18]}});
+  map.addLayer({id:'spawn-ring',type:'line',source:'spawn',paint:{'line-color':['get','color'],'line-width':['case',['get','you'],3,2.2],'line-opacity':0.95,'line-dasharray':[1.5,1.2]}});
+  map.addSource('pops',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'pops',type:'circle',source:'pops',paint:{'circle-radius':['get','r'],'circle-color':['get','color'],'circle-opacity':['get','o'],'circle-stroke-width':3,'circle-stroke-color':'#ffffff','circle-stroke-opacity':['get','o']}});
+  map.addSource('deaths',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'deaths',type:'circle',source:'deaths',paint:{'circle-radius':['get','r'],'circle-color':'rgba(0,0,0,0)','circle-stroke-width':4,'circle-stroke-color':['get','color'],'circle-stroke-opacity':['get','o']}});
   map.addSource('players',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],9,6],'circle-color':'#fff','circle-stroke-width':['case',['get','you'],3,2],'circle-stroke-color':['get','color']}});
-  // You: modest size + distinct white ring (not a huge blob)
-  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],9.5,6.5],'circle-color':['get','color'],'circle-stroke-width':['case',['get','you'],3.5,1.8],'circle-stroke-color':['case',['get','you'],'#ffffff','#f5f5f5']}});
+  // Heads: player colour with a dark rim; you get a white halo. Ghosts are see-through.
+  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],10,7.5],'circle-color':['get','color'],'circle-opacity':['case',['==',['get','mode'],'ghost'],0.35,1],'circle-stroke-opacity':['case',['==',['get','mode'],'ghost'],0.35,1],'circle-stroke-width':['case',['get','you'],3.5,2.5],'circle-stroke-color':['case',['get','you'],'#ffffff',['get','edge']]}});
   ready=true; post({type:'ready'});
 });
 map.on('styledata',()=>{

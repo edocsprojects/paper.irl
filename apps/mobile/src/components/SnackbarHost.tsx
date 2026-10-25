@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { FadeGate } from "./FadeGate";
 import { colors, fonts } from "../theme/tokens";
@@ -9,19 +9,27 @@ type Props = {
   onClear: () => void;
 };
 
+/** How long a toast stays up before fading out. */
+const SHOW_MS = 3000;
+
 export function SnackbarHost({ snack, onClear }: Props) {
+  // Keyed on the toast id only: the parent re-renders ~4×/s with a fresh
+  // onClear, which used to restart this timer forever (toasts never faded).
+  const clear = useRef(onClear);
+  clear.current = onClear;
+  const id = snack?.id;
   useEffect(() => {
-    if (!snack) return;
-    const t = setTimeout(onClear, 2200);
+    if (id == null) return;
+    const t = setTimeout(() => clear.current(), SHOW_MS);
     return () => clearTimeout(t);
-  }, [snack, onClear]);
+  }, [id]);
 
   return (
     <FadeGate
       active={!!snack}
       mountKey={snack?.id ?? 0}
       style={styles.wrap}
-      durationMs={180}
+      durationMs={260}
     >
       <View
         style={[
@@ -51,15 +59,18 @@ const styles = StyleSheet.create({
     elevation: 40,
   },
   bar: {
-    backgroundColor: "rgba(20,20,20,0.92)",
+    backgroundColor: "rgba(20,20,20,0.88)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
     paddingHorizontal: 14,
     paddingVertical: 11,
     borderRadius: 12,
     maxWidth: "96%",
   },
-  good: { backgroundColor: "rgba(22,101,52,0.95)" },
-  bad: { backgroundColor: "rgba(153,27,27,0.95)" },
-  warn: { backgroundColor: "rgba(146,64,14,0.95)" },
+  // Dark glass everywhere; tone shows as a coloured edge, not a loud slab.
+  good: { borderColor: "rgba(34,197,94,0.7)" },
+  bad: { borderColor: "rgba(239,68,68,0.75)" },
+  warn: { borderColor: "rgba(245,158,11,0.75)" },
   text: {
     color: "#fff",
     fontFamily: fonts.ui,
