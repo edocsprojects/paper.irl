@@ -1,4 +1,4 @@
-/** Street-map WebView (OpenFreeMap) — no Google key. */
+/** Street-map WebView (OpenFreeMap) — freeplay GPS polylines inside arena circle. */
 export function buildMapHtml(): string {
   return `<!doctype html>
 <html>
@@ -36,36 +36,56 @@ function darken(hex,a){const h=hex.replace('#','');const n=parseInt(h.length===3
   const r=Math.max(0,((n>>16)&255)*(1-a)),g=Math.max(0,((n>>8)&255)*(1-a)),b=Math.max(0,(n&255)*(1-a));
   return 'rgb('+Math.round(r)+','+Math.round(g)+','+Math.round(b)+')';}
 function fmt(ms){const s=Math.max(0,Math.ceil(ms/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
-function edgeLine(graph,id){const e=graph.edges[id],a=graph.nodes[e.a],b=graph.nodes[e.b];return [[a.lon,a.lat],[b.lon,b.lat]];}
+function ringCoords(ring){return (ring||[]).map(p=>[p.lon,p.lat]);}
+/** Equirectangular circle approx — matches rules circleRing for display. */
+function circleRing(center,radiusM,steps){
+  const out=[];
+  const mLat=111320;
+  const mLon=111320*Math.cos(center.lat*Math.PI/180);
+  for(let i=0;i<=steps;i++){
+    const t=(i/steps)*Math.PI*2;
+    out.push([center.lon+(radiusM*Math.cos(t))/mLon, center.lat+(radiusM*Math.sin(t))/mLat]);
+  }
+  return out;
+}
 function paint(state){
-  if(!ready||!state||!state.graph) return;
-  const g=state.graph;
+  if(!ready||!state||!state.arena) return;
+  const arena=state.arena;
   const owned={type:'FeatureCollection',features:[]};
   for(const seat of state.seats||[]){
     const border=darken(seat.color,0.32);
-    for(const id of (seat.ownedEdges||[])){
-      owned.features.push({type:'Feature',properties:{fill:seat.color,border,kind:'owned'},geometry:{type:'LineString',coordinates:edgeLine(g,id)}});
+    for(const ring of (seat.owned||[])){
+      if(!ring||ring.length<3) continue;
+      const coords=ringCoords(ring);
+      if(coords.length&&(coords[0][0]!==coords[coords.length-1][0]||coords[0][1]!==coords[coords.length-1][1])){
+        coords.push(coords[0]);
+      }
+      owned.features.push({type:'Feature',properties:{fill:seat.color,border,kind:'owned'},geometry:{type:'Polygon',coordinates:[coords]}});
     }
-    for(const id of (seat.trail||[])){
-      owned.features.push({type:'Feature',properties:{fill:seat.color,border,kind:'trail'},geometry:{type:'LineString',coordinates:edgeLine(g,id)}});
+    if((seat.trail||[]).length>=2){
+      owned.features.push({type:'Feature',properties:{fill:seat.color,border,kind:'trail'},geometry:{type:'LineString',coordinates:ringCoords(seat.trail)}});
     }
   }
   const players={type:'FeatureCollection',features:[]};
   for(const seat of state.seats||[]){
-    const node=g.nodes[seat.headNode??seat.respawnNode??0];
-    if(!node) continue;
-    players.features.push({type:'Feature',properties:{color:seat.color,you:!!seat.you},geometry:{type:'Point',coordinates:[node.lon,node.lat]}});
-    if(seat.respawnNode!=null){
-      const m=g.nodes[seat.respawnNode];
-      players.features.push({type:'Feature',properties:{color:seat.color,mode:'marker'},geometry:{type:'Point',coordinates:[m.lon,m.lat]}});
+    const pos=seat.position||seat.respawnAt;
+    if(pos){
+      players.features.push({type:'Feature',properties:{color:seat.color,you:!!seat.you,mode:seat.mode},geometry:{type:'Point',coordinates:[pos.lon,pos.lat]}});
+    }
+    if(seat.respawnAt){
+      players.features.push({type:'Feature',properties:{color:seat.color,you:!!seat.you,mode:'marker'},geometry:{type:'Point',coordinates:[seat.respawnAt.lon,seat.respawnAt.lat]}});
     }
   }
+  const boundary={type:'FeatureCollection',features:[{
+    type:'Feature',properties:{},geometry:{type:'LineString',coordinates:circleRing({lat:arena.centerLat,lon:arena.centerLon},arena.radiusM,64)}
+  }]};
+  map.getSource('boundary').setData(boundary);
   map.getSource('owned').setData(owned);
   map.getSource('players').setData(players);
-  const you=state.seats.find(s=>s.you);
+  const you=(state.seats||[]).find(s=>s.you);
   if(you){
-    const n=g.nodes[you.headNode??you.respawnNode??0];
-    if(n) map.easeTo({center:[n.lon,n.lat],duration:250});
+    const p=you.position||you.respawnAt;
+    if(p) map.easeTo({center:[p.lon,p.lat],duration:250});
   }
   const board=document.getElementById('board');
   board.innerHTML='<div style="font-size:10px;letter-spacing:.12em;color:#6b7280">LEADERBOARD</div>'+
@@ -79,14 +99,16 @@ function snack(text,tone){
   document.getElementById('snacks').prepend(el);
   setTimeout(()=>el.remove(),4000);
 }
-map=new maplibregl.Map({container:'map',style:STYLE,center:[-93.23256,44.97452],zoom:15.5});
+map=new maplibregl.Map({container:'map',style:STYLE,center:[-93.23256,44.97452],zoom:14.2});
 map.on('load',()=>{
+  map.addSource('boundary',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'boundary',type:'line',source:'boundary',paint:{'line-color':'#1b1b1b','line-opacity':0.55,'line-width':2.2,'line-dasharray':[2,1.4]}});
   map.addSource('owned',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'owned-fill',type:'line',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'line-color':['get','fill'],'line-opacity':0.38,'line-width':14}});
-  map.addLayer({id:'owned-border',type:'line',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':4.5}});
-  map.addLayer({id:'trails',type:'line',source:'owned',filter:['==',['get','kind'],'trail'],paint:{'line-color':['get','border'],'line-width':3.2,'line-dasharray':[1.4,1.1]}});
+  map.addLayer({id:'owned-fill',type:'fill',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'fill-color':['get','fill'],'fill-opacity':0.38}});
+  map.addLayer({id:'owned-border',type:'line',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.8}});
+  map.addLayer({id:'trails',type:'line',source:'owned',filter:['==',['get','kind'],'trail'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':3.4,'line-dasharray':[1.4,1.1]}});
   map.addSource('players',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':7,'circle-color':'#fff','circle-stroke-width':3,'circle-stroke-color':['get','color']}});
+  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],9,6],'circle-color':'#fff','circle-stroke-width':3,'circle-stroke-color':['get','color']}});
   map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],10,7],'circle-color':['get','color'],'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
   ready=true; post({type:'ready'});
 });

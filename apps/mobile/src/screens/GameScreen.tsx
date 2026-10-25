@@ -110,13 +110,21 @@ export function GameScreen({ session, onExit }: Props) {
   }, [auto, lobby?.phase, session.code, session.seatId]);
 
   async function spawn() {
-    if (!you) return;
+    if (!you?.respawnAt) return;
     try {
-      // Autopilot plants at marker; for human, send fix at respawn node via autopilot plant path
-      const next = await api.autopilot(session.code, session.seatId);
+      // Freeplay: plant by sending a fix at the assigned GPS marker (rules plantRadius).
+      const at = you.respawnAt;
+      const next = await api.fix(session.code, session.seatId, {
+        lat: at.lat,
+        lon: at.lon,
+        accuracyM: 5,
+        speedMps: 0,
+        clientTsMs: Date.now(),
+        mock: true,
+      });
       setLobby(next);
       plantedOnce.current = true;
-      setSnack("You're planted — go claim paths");
+      setSnack("You're planted — freehand claim inside the circle");
       setTimeout(() => setSnack(null), 3500);
     } catch (e) {
       setError(String(e));
