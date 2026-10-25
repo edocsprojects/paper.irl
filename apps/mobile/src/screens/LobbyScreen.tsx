@@ -96,7 +96,7 @@ export function LobbyScreen({ onReady }: Props) {
       <Text style={styles.brand}>paper.irl</Text>
       <Text style={styles.kicker}>{title}</Text>
       <Text style={styles.copy}>
-        Keller Hall · Android · street map · local server
+        Keller Hall · freeplay GPS · 500 m · local server
       </Text>
 
       <Text style={styles.label}>Nickname</Text>

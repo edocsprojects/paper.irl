@@ -1,18 +1,23 @@
 import { apiBase } from "./config";
 
+export type LatLon = { lat: number; lon: number };
+
+/** Matches server `seatPublicView` / freeplay lobby seats. */
 export type SeatView = {
   id: number;
   nickname: string;
   mode: string;
   color: string;
   areaM2: number;
-  trail: number[];
-  headEdge: number | null;
-  headNode: number | null;
-  respawnNode: number | null;
-  ownedEdges: number[];
+  /** Open freehand trail (lat/lon), not graph edge ids. */
+  trail: LatLon[];
+  /** Closed territory rings (lat/lon). */
+  owned: LatLon[][];
+  position: LatLon | null;
+  respawnAt: LatLon | null;
 };
 
+/** Matches server `lobbyPayload` — freeplay GPS, no path graph. */
 export type LobbyPayload = {
   code: string;
   phase: string;
@@ -20,13 +25,12 @@ export type LobbyPayload = {
   startedAtMs: number | null;
   endsAtMs: number | null;
   maxSeats: number;
-  graph: {
+  mode: "freeplay";
+  arena: {
     id: string;
     centerLat: number;
     centerLon: number;
     radiusM: number;
-    nodes: { id: number; lat: number; lon: number }[];
-    edges: { id: number; a: number; b: number; lengthM: number; areaM2: number }[];
   };
   seats: SeatView[];
   top3: SeatView[];
@@ -46,12 +50,22 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => req<{ ok: boolean }>("/health"),
+  health: () =>
+    req<{
+      ok: boolean;
+      mode: string;
+      arena: string;
+      radiusM: number;
+      center: LatLon;
+    }>("/health"),
   createLobby: (durationMs = 15 * 60 * 1000) =>
-    req<{ code: string; phase: string }>("/lobbies", {
-      method: "POST",
-      body: JSON.stringify({ durationMs }),
-    }),
+    req<{ code: string; phase: string; maxSeats: number; mode: string }>(
+      "/lobbies",
+      {
+        method: "POST",
+        body: JSON.stringify({ durationMs }),
+      },
+    ),
   join: (code: string, nickname: string) =>
     req<{ seat: SeatView; phase: string }>(`/lobbies/${code}/join`, {
       method: "POST",

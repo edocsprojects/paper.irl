@@ -21,7 +21,8 @@ export function GameMap({ lobby, youId, remainingMs }: Props) {
     const msg = JSON.stringify({
       type: "state",
       state: {
-        graph: lobby.graph,
+        arena: lobby.arena,
+        mode: lobby.mode,
         seats,
         top3: lobby.top3,
         remainingMs,

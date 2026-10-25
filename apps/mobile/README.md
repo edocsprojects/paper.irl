@@ -86,7 +86,7 @@ cd apps/mobile/ios && pod install && open paperirl.xcworkspace
 
 Xcode → **paperirl** → iPhone Simulator → **Run** (rebuild so AppDelegate is current). If Xcode shows a pcm / `.pnpm` error, quit Xcode, run `pnpm mobile:ios:clean`, then `pod install` again.
 
-Freeplay mode is **not** on this branch — it lands separately (PR #5); mobile freeplay is the follow-up once iOS boot is green.
+MVP play is **freeplay GPS** inside the Keller 500 m circle (shared `@paper-irl/rules` + server). Trails/territory are freehand polylines — not OSM path-graph claims. Off-boundary fixes are soft-rejected/clamped by the server.
 
 ---
 
