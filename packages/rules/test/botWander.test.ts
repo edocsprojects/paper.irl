@@ -48,7 +48,7 @@ describe("wanderSeat", () => {
     let maxTrail = 0;
     let leftZone = false;
     let sawTrailingPayload = false;
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 1400; i++) {
       const now = t0 + i * 200;
       for (const s of seats) wanderSeat(lobby, s.id, rand, now);
       for (const s of seats) {

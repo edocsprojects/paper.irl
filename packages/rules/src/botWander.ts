@@ -151,9 +151,10 @@ function ensureRaid(state: LobbyState, seat: Seat, pos: LatLon, rand: () => numb
   if (!plan || haversineM(plan.home.lat, plan.home.lon, home.lat, home.lon) > 35) {
     plan = {
       home,
-      goal: pickLocalGoal(state, seat, home, rand, 85),
+      goal: pickLocalGoal(state, seat, home, rand, 110),
       minTrail: 12 + Math.floor(rand() * 14),
-      leashM: 85,
+      // Slightly wider leash so spread starters still cross trails.
+      leashM: 110,
     };
     raids.set(seat.id, plan);
   }
@@ -321,15 +322,11 @@ export function wanderSeat(
 
   const autoPlant = opts?.autoPlant !== false;
   const pos = wanderStep(state, seat, rand, autoPlant);
+  // Remember open trail so we only reset the raid after a bank — never while
+  // still walking out of the starter (that trapped bots inside the blob).
+  const hadOpenTrail = seat.trail.length > 0 || seat.mode === "trailing";
 
-  if (seat.mode === "safe" && seat.trail.length === 0) {
-    const plan = raids.get(seatId);
-    if (plan && seat.owned[0] && pointInRing(pos, seat.owned[0])) {
-      raids.delete(seatId);
-    }
-  }
-
-  return applyFix(
+  const effects = applyFix(
     state,
     seatId,
     {
@@ -342,6 +339,12 @@ export function wanderSeat(
     },
     nowMs,
   );
+
+  if (hadOpenTrail && seat.mode === "safe" && seat.trail.length === 0) {
+    raids.delete(seatId);
+  }
+
+  return effects;
 }
 
 export function mulberry32(seed: number) {

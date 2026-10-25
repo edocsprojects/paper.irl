@@ -1,5 +1,5 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 7;
+export const MAP_HTML_REVISION = 8;
 
 /**
  * Street basemap (OpenFreeMap) — labels stripped.
@@ -35,8 +35,8 @@ export function buildMapHtml(): string {
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const STYLE='https://tiles.openfreemap.org/styles/bright';
-/** Neighborhood view — zone + trail + nearby players (not city, not tight). */
-const PLAY_ZOOM=15.15;
+/** Neighborhood view — closer than 15.15 so you read; not the old tight 16.35. */
+const PLAY_ZOOM=15.55;
 const CAM_LERP=0.12;
 const DOT_LERP=0.22;
 let map, ready=false;
@@ -260,8 +260,10 @@ map.on('load',()=>{
   map.addLayer({id:'trails-casing',type:'line',source:'trails',paint:{'line-color':'#ffffff','line-opacity':0.9,'line-width':7,'line-cap':'round','line-join':'round'}});
   map.addLayer({id:'trails',type:'line',source:'trails',paint:{'line-color':['get','color'],'line-opacity':1,'line-width':4.5,'line-cap':'round','line-join':'round'}});
   map.addSource('players',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],10,7],'circle-color':'#fff','circle-stroke-width':3,'circle-stroke-color':['get','color']}});
-  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],11,7.5],'circle-color':['get','color'],'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
+  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],14,7],'circle-color':'#fff','circle-stroke-width':['case',['get','you'],4,2.5],'circle-stroke-color':['get','color']}});
+  // Local player clearly larger than bots so "you" reads at neighborhood zoom
+  map.addLayer({id:'players-you-halo',type:'circle',source:'players',filter:['all',['!=',['get','mode'],'marker'],['get','you']],paint:{'circle-radius':18,'circle-color':'#fff','circle-opacity':0.55}});
+  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],15,7],'circle-color':['get','color'],'circle-stroke-width':['case',['get','you'],3.5,2],'circle-stroke-color':'#fff'}});
   ready=true; post({type:'ready'});
 });
 map.on('styledata',()=>{ if(ready) declutter(); });

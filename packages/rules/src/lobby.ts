@@ -102,16 +102,51 @@ export function startLobby(state: LobbyState, nowMs: number): Effect[] {
   state.startedAtMs = nowMs;
   state.endsAtMs = nowMs + state.durationMs;
   const effects: Effect[] = [{ kind: "phase", phase: "live" }];
-  // Cluster plant markers near arena center so local raids overlap (cuts on screen).
-  for (const seat of state.seats.values()) {
-    const rand = mulberry(randomSeed(seat.id));
-    const cluster = fromLocalM(
-      state.arena.centerLat,
-      state.arena.centerLon,
-      (rand() - 0.5) * 90,
-      (rand() - 0.5) * 90,
-    );
-    const at = pickNearestSafePoint(state, cluster, randomSeed(seat.id));
+  // Spread starters on a near-center ring — not stacked, not arena-wide.
+  // ~55–100 m from center with min separation so blobs don't sit on each other;
+  // still close enough for local roam + trail crossings.
+  const seats = [...state.seats.values()];
+  const placed: LatLon[] = [];
+  const minSepM = 52;
+  for (let i = 0; i < seats.length; i++) {
+    const seat = seats[i]!;
+    const rand = mulberry(randomSeed(seat.id * 17 + i));
+    let at: LatLon | null = null;
+    for (let attempt = 0; attempt < 36; attempt++) {
+      const ang =
+        (i / Math.max(1, seats.length)) * Math.PI * 2 +
+        (rand() - 0.5) * 0.55 +
+        attempt * 0.37;
+      const rad = 58 + rand() * 42 + (attempt % 5) * 6;
+      const candidate = fromLocalM(
+        state.arena.centerLat,
+        state.arena.centerLon,
+        Math.cos(ang) * rad,
+        Math.sin(ang) * rad,
+      );
+      const safe = pickNearestSafePoint(state, candidate, randomSeed(seat.id + attempt));
+      if (
+        placed.every(
+          (p) => haversineM(p.lat, p.lon, safe.lat, safe.lon) >= minSepM,
+        )
+      ) {
+        at = safe;
+        break;
+      }
+    }
+    if (!at) {
+      at = pickNearestSafePoint(
+        state,
+        fromLocalM(
+          state.arena.centerLat,
+          state.arena.centerLon,
+          (rand() - 0.5) * 160,
+          (rand() - 0.5) * 160,
+        ),
+        randomSeed(seat.id),
+      );
+    }
+    placed.push(at);
     seat.respawnAt = at;
     seat.mode = "toPlant";
     effects.push({ kind: "respawnAssigned", seatId: seat.id, at });
