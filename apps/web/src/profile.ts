@@ -1,3 +1,22 @@
+/** One finished (or left) game — the Stats page's activity feed. */
+export interface GameRecord {
+  atMs: number;
+  kind: "lobby" | "event";
+  sim: boolean;
+  areaM2: number;
+  rank: number | null;
+  players: number;
+  distanceM: number;
+  durationMs: number;
+  cuts: number;
+  deaths: number;
+  bestClaimM2: number;
+  stolenM2: number;
+  won: boolean;
+  /** Event name for event games. */
+  label?: string;
+}
+
 /** Local profile + lifetime stats. Identity for the live event is guestId or the Google account. */
 export interface Profile {
   name: string;
@@ -16,7 +35,19 @@ export interface Profile {
   bestGameM2: number;
   wins: number;
   totalPlayMs: number;
+  /** Lifetime extras (Strava-style). */
+  totalDistanceM: number;
+  totalCuts: number;
+  totalDeaths: number;
+  totalStolenM2: number;
+  bestClaimM2: number;
+  longestRunM: number;
+  mostCuts: number;
+  /** Most recent first, capped. */
+  history: GameRecord[];
 }
+
+export const HISTORY_MAX = 50;
 
 const KEY = "paper-irl.profile.v1";
 
@@ -44,6 +75,14 @@ function defaults(): Profile {
     bestGameM2: 0,
     wins: 0,
     totalPlayMs: 0,
+    totalDistanceM: 0,
+    totalCuts: 0,
+    totalDeaths: 0,
+    totalStolenM2: 0,
+    bestClaimM2: 0,
+    longestRunM: 0,
+    mostCuts: 0,
+    history: [],
   };
 }
 
@@ -55,6 +94,7 @@ export function loadProfile(): Profile {
       const p = { ...base, ...(JSON.parse(raw) as Partial<Profile>) };
       if ((p.signIn as string) === "apple") p.signIn = "guest";
       p.demoSpeed = Math.min(20, Math.max(1, Math.round(p.demoSpeed)));
+      if (!Array.isArray(p.history)) p.history = [];
       return p;
     }
   } catch {

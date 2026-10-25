@@ -91,9 +91,13 @@ export class LiveMatch {
   ) {}
 
   /** Watch / play the public event (identified by guest id or Google token). */
-  async openEvent() {
+  /** Which community event (for /events/:id). */
+  eventId = "keller";
+
+  async openEvent(id: string) {
     this.leave();
     this.kind = "event";
+    this.eventId = id;
     this.code = "EVENT";
     await this.refresh();
     this.startPolling();
@@ -101,7 +105,7 @@ export class LiveMatch {
 
   async joinEvent(name: string) {
     this.kind = "event";
-    this.accept(await this.request("POST", "/event/join", { name }));
+    this.accept(await this.request("POST", `/events/${this.eventId}/join`, { name }));
     this.armed = true; // event plants as soon as you're inside the circle
   }
 
@@ -204,7 +208,7 @@ export class LiveMatch {
   async refresh() {
     if (!this.code) return;
     try {
-      this.accept(await this.request("GET", this.kind === "event" ? "/event" : `/lobbies/${this.code}`));
+      this.accept(await this.request("GET", this.kind === "event" ? `/events/${this.eventId}` : `/lobbies/${this.code}`));
     } catch (err) {
       this.fail(err);
     }
@@ -341,7 +345,7 @@ export class LiveMatch {
     }
     this.lastSample = { p, t: pos.timestamp };
     try {
-      const path = this.kind === "event" ? "/event/fix" : `/lobbies/${this.code}/fix`;
+      const path = this.kind === "event" ? `/events/${this.eventId}/fix` : `/lobbies/${this.code}/fix`;
       const res = await this.request("POST", path, {
         seatId: this.seatId,
         fix: {

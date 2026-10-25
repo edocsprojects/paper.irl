@@ -8,7 +8,7 @@ IRL [paper.io](https://paper.io): you move your body instead of a square. Leave 
 apps/web       Web app (main demo): sign-in, Home (Create / Join / Community Events),
                lobby, game HUD, results, Settings (Real GPS / Simulation)
 apps/mobile    Expo React Native client (iOS / Android), real GPS + bot demo
-apps/server    Fastify HTTP API: lobbies, bot loop, 7-day community event, optional Postgres / Supabase auth
+apps/server    Fastify HTTP API: lobbies, bot loop, three 1-hour community events, optional Postgres / Supabase auth
 apps/sim       Headless 8-bot simulation (verification harness)
 packages/rules Pure game rules (territory, cuts, respawn, bots) shared by everything
 docs/          MVP rules summary (docs/mvp-rules.md)
@@ -30,7 +30,7 @@ Then:
 
 Use **Real GPS** mode to play outside: Create puts you in a lobby with a 6-letter code friends enter under **Join game**; the host taps **Start**, then you **Tap to spawn** where you stand. Phones only allow GPS on HTTPS — use `pnpm demo:phone` and open the LAN address it prints.
 
-**Community Events** → **Keller Hall** opens the 7-day public event (score / rank, countdown, live map, **Let's Claim!!**). In Simulation it runs locally with bots; in Real GPS it uses the server event.
+**Community Events** lists three public 1-hour events — **Keller Hall · UMN**, **North Loop** (300 Washington Ave N, Minneapolis) and **Millennium Park · Chicago** — each with score / rank, countdown, live map and **Let's Claim!!**. Each restarts when its hour is up. In Simulation they run locally with bots; in Real GPS they use the server events.
 
 ## Game rules (packages/rules)
 
@@ -45,9 +45,11 @@ Full summary: [`docs/mvp-rules.md`](docs/mvp-rules.md).
 
 ## Web app (apps/web)
 
-- Design: teammate's light theme (Manrope), illustrated sign-in (animated loop-and-claim) and Home art; Home + Settings tabs always visible.
+- Design: teammate's light theme (Manrope), illustrated sign-in (animated loop-and-claim) and Home art; Home / Stats / Settings tabs always visible.
+- Stats: this week (distance, land, games + daily bars), personal records, all-time totals and recent games (stored on the device).
+- While a game runs, Home shows a small **Back to game · time ›** link in the header.
 - Flow: sign-in → Home (**Create game** / **Join game** / **Community Events**) → Create config (radius 500 / 1,000 / 1,500 ft, max players, 5 / 10 / 15 min) → lobby card → 3-2-1 → full-screen game → results leaderboard (Play again / Leave).
-- Game HUD: top-3 board (% of arena), timer, **Zoom in / Zoom out**, red **Leave**, kill feed. Snackbar is only about you (claims, land taken, cuts you made, raid alerts, lead changes, 1 minute left) and fades after 3 s.
+- Game HUD: top-3 board (% of arena), timer, **Zoom in / Zoom out**, red **Leave**, kill feed. Snackbar is only about you (claims, land taken, cuts you made, raid alerts, lead changes, 1 minute left) and fades after 3 s; it stays up while you're outside the circle or out after a cut. Games last at most 1 hour.
 - Map: OpenFreeMap streets with labels, POIs and transit stripped; no API key needed.
 - Google sign-in (optional): `cp .env.example .env` and fill `SUPABASE_*` / `VITE_SUPABASE_*`. Guests work without it.
 
@@ -90,7 +92,8 @@ export DATABASE_URL=postgres://paper:paper@localhost:5432/paper_irl
 - `POST /lobbies/:code/autopilot` `{ seatId, autoPlant? }` — dev autopilot step
 - `POST /lobbies/:code/rematch/ready` · `POST /lobbies/:code/rematch/start` `{ seatId }`
 - `GET /lobbies/:code` → arena, seats (territory polygons, trails, respawn rings), top3, kill `feed`, land `notices`, spawn `pops`
-- `GET /event` · `POST /event/join` `{ name }` · `POST /event/fix` `{ fix }` · `GET /event/results` — 7-day community event (auth: `Authorization: Bearer <supabase token>` or `X-Guest-Id`)
+- `GET /events` → the three 1-hour community events (`keller`, `north-loop`, `chicago`) with time left and player counts
+- `GET /events/:id` · `POST /events/:id/join` `{ name }` · `POST /events/:id/fix` `{ fix }` · `GET /events/:id/results` (auth: `Authorization: Bearer <supabase token>` or `X-Guest-Id`); `/event/*` is an alias for Keller Hall
 
 ## License
 

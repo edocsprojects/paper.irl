@@ -1177,7 +1177,7 @@ select {
 /* Tabs (Home + Settings) are always visible; every screen but the intro
    leaves room for them. */
 .tabs {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .screen:not(.intro) {
@@ -1245,10 +1245,10 @@ select {
   align-items: center;
   gap: 0.75rem;
   width: 100%;
-  padding: 0.8rem 1rem;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+  background: var(--paper);
   color: var(--ink);
   font: inherit;
   text-align: left;
@@ -1256,22 +1256,7 @@ select {
 }
 
 .return-game:hover {
-  background: color-mix(in srgb, var(--accent) 14%, var(--paper));
-}
-
-.live-dot {
-  flex: none;
-  width: 0.7rem;
-  height: 0.7rem;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
-  animation: live-pulse 1.6s ease-out infinite;
-}
-
-@keyframes live-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
-  100% { box-shadow: 0 0 0 0.55rem transparent; }
+  background: var(--surface);
 }
 
 .return-text {
@@ -1295,7 +1280,7 @@ select {
 .return-go {
   font-size: 1.6rem;
   line-height: 1;
-  color: var(--accent);
+  color: var(--muted);
 }
 
 .return-game.hidden {
@@ -1765,4 +1750,237 @@ select {
 /* Sign-in loop scene: animated from JS (trail tip and runner share one clock). */
 .h-merged {
   opacity: 0;
+}
+
+
+/* ---------- Stats (Strava-style) ---------- */
+.week-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1rem;
+  border-radius: 18px;
+  background: var(--surface);
+}
+
+.week-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.week-range {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.week-figures {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.week-figures div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.week-figures strong {
+  font-size: 1.25rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.week-figures span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.week-bars {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.45rem;
+  align-items: end;
+  height: 6.5rem;
+}
+
+.week-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  height: 100%;
+}
+
+.week-bar i {
+  display: block;
+  width: 100%;
+  min-height: 3px;
+  border-radius: 6px 6px 3px 3px;
+  background: var(--accent);
+}
+
+.week-bar.empty i {
+  background: var(--surface-2);
+}
+
+.week-bar.today span {
+  color: var(--ink);
+}
+
+.week-bar span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.pr-list {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pr-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.pr-row:last-child {
+  border-bottom: 0;
+}
+
+.pr-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-deep);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.pr-row .pr-label {
+  flex: 1;
+  font-weight: 700;
+}
+
+.pr-row strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.activity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.8rem 1rem;
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.activity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.activity-head strong {
+  font-size: 0.95rem;
+}
+
+.activity-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.activity-figs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+
+.activity-figs div {
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-figs strong {
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-figs span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.activity-list .empty {
+  padding: 1rem;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+  font-weight: 700;
+}
+
+/* Stats sections keep their natural height (the screen scrolls instead). */
+[data-screen="stats"] > * {
+  flex-shrink: 0;
+}
+
+/* Subtle "Back to game" link in the Home header (no card, no button). */
+.back-link {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 0.4rem 0.8rem;
+  color: var(--accent-deep);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.back-link span {
+  color: var(--ink);
+  opacity: 0.55;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.back-link span:empty {
+  display: none;
+}
+
+.back-link.hidden {
+  display: none;
 }

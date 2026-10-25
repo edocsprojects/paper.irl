@@ -101,7 +101,9 @@
       <section class="screen home" data-screen="home" hidden>
         <header class="home-bar">
           <span class="home-brand">paper.irl</span>
-          <span class="home-mode" id="home-mode"></span>
+          <button class="back-link hidden" type="button" id="return-game">
+            Back to game<span id="return-sub"></span>
+          </button>
         </header>
         <div class="home-hero" id="home-hero">
           <!-- Teammate's campus art, framed on the territories. -->
@@ -173,14 +175,6 @@
         </div>
         <div class="home-actions">
           <p class="home-copy">Leave your zone. Loop back. Own the block.</p>
-          <button class="return-game hidden" type="button" id="return-game">
-            <span class="live-dot" aria-hidden="true"></span>
-            <span class="return-text">
-              <strong>Game in progress</strong>
-              <span id="return-sub">Tap to return</span>
-            </span>
-            <span class="return-go" aria-hidden="true">›</span>
-          </button>
           <button class="btn primary big" type="button" id="btn-create">Create game</button>
           <button class="btn big" type="button" id="btn-join">Join game</button>
           <button class="btn big events-btn" type="button" id="btn-events">Community Events</button>
@@ -258,16 +252,10 @@
           <h2 class="bar-title">Community Events</h2>
           <span class="icon-btn ghost"></span>
         </header>
-        <div class="panel location-list">
-          <button class="place" type="button" id="event-keller">
-            <span class="place-name">Keller Hall · UMN</span>
-            <span class="place-sub">200 Union St SE · 7-day event · 1,640 ft zone</span>
-          </button>
-          <p class="hint center">More events coming soon</p>
-        </div>
+        <div class="panel location-list" id="events-list"></div>
       </section>
 
-      <!-- Community event: Keller Hall (teammate's event screen) -->
+      <!-- Community event (teammate's event screen) -->
       <section class="screen" data-screen="event" hidden>
         <header class="bar">
           <button class="icon-btn" type="button" data-go="events" aria-label="Back">‹</button>
@@ -282,7 +270,7 @@
             </span>
           </div>
         </header>
-        <p class="limited"><strong>Keller Hall</strong> · 7-day event ends in <strong id="event-timer">–</strong></p>
+        <p class="limited"><strong id="event-name">Event</strong> · 1-hour event ends in <strong id="event-timer">–</strong></p>
         <p class="winner hidden" id="event-winner"></p>
         <div class="map-slot live" id="slot-event">
           <p class="map-alert hidden" id="event-alert"></p>
@@ -336,6 +324,37 @@
         <button class="link" type="button" id="btn-results-leave">Leave</button>
       </section>
 
+      <!-- Stats (Strava-style) -->
+      <section class="screen" data-screen="stats" hidden>
+        <header class="bar">
+          <span class="icon-btn ghost"></span>
+          <h2 class="bar-title">Stats</h2>
+          <span class="icon-btn ghost"></span>
+        </header>
+
+        <div class="week-card">
+          <div class="week-head">
+            <span class="tile-label">This week</span>
+            <span class="week-range" id="week-range"></span>
+          </div>
+          <div class="week-figures">
+            <div><strong id="wk-distance">0 mi</strong><span>Distance</span></div>
+            <div><strong id="wk-area">0 ft²</strong><span>Land claimed</span></div>
+            <div><strong id="wk-games">0</strong><span>Games</span></div>
+          </div>
+          <div class="week-bars" id="week-bars" aria-label="Land claimed per day"></div>
+        </div>
+
+        <p class="section-label">Personal records</p>
+        <div class="pr-list" id="pr-list"></div>
+
+        <p class="section-label">All-time</p>
+        <div class="grid-2" id="stats"></div>
+
+        <p class="section-label">Recent games</p>
+        <ol class="activity-list" id="activity-list"></ol>
+      </section>
+
       <!-- Frame 7: settings tab (profile, theme, all-time stats) -->
       <section class="screen tabbed" data-screen="settings" hidden>
         <header class="bar">
@@ -378,8 +397,6 @@
           <input id="theme-toggle" class="switch" type="checkbox" />
         </label>
 
-        <p class="section-label">All-time stats</p>
-        <div class="grid-2" id="stats"></div>
 
         <p class="section-label">Privacy</p>
         <label class="setting-row">
@@ -408,6 +425,10 @@
         <button class="tab" type="button" data-tab="home">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" /></svg>
           Home
+        </button>
+        <button class="tab" type="button" data-tab="stats">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11h4v9zm6 0V4h4v16zm6 0v-6h4v6z" /></svg>
+          Stats
         </button>
         <button class="tab" type="button" data-tab="settings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9m0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5" /></svg>
