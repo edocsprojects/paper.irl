@@ -62,15 +62,17 @@ Free Apple **Personal Team** is enough for **Simulator**. Paid **$99/yr** only f
 
 ### Terminal 1 — API
 
+Default (no `rm -rf node_modules`, no `ios:clean` every run):
+
 ```bash
-git fetch && git checkout cursor/ios-xcode-2c59 && git pull && git log -1 --oneline
-rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/mobile/.expo apps/mobile/.verify-export apps/mobile/.verify-export-from-root
+git fetch && git checkout <branch> && git pull
 pnpm install
 pnpm --filter @paper-irl/rules build
-pnpm mobile:ios:clean
 pnpm verify:mobile
 pnpm dev:server
 ```
+
+Only after pnpm/Metro/Pods path breakage: wipe `node_modules` / `.expo`, then `pnpm install` again. Only if AST/Pods/pcm break: `pnpm mobile:ios:clean` before rebuild.
 
 ### Terminal 2 — iOS
 
@@ -84,7 +86,7 @@ Or open Xcode after pods:
 cd apps/mobile/ios && pod install && open paperirl.xcworkspace
 ```
 
-Xcode → **paperirl** → iPhone Simulator → **Run** (rebuild so AppDelegate is current). If Xcode shows a pcm / `.pnpm` error, quit Xcode, run `pnpm mobile:ios:clean`, then `pod install` again.
+Xcode → **paperirl** → iPhone Simulator → **Run**. If Xcode shows a pcm / `.pnpm` error, quit Xcode, run `pnpm mobile:ios:clean`, then `pod install` again.
 
 MVP play is **freeplay GPS** inside the Keller 500 m circle (shared `@paper-irl/rules` + server). Trails/territory are freehand polylines — not OSM path-graph claims. Off-boundary fixes are soft-rejected/clamped by the server.
 
