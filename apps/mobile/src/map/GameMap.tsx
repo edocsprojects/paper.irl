@@ -46,6 +46,15 @@ function buildStateMessage(lobby: LobbyPayload, youId: number): string {
   });
 }
 
+/** Push lobby state into the WebView (injectJavaScript — reliable on iOS HTML). */
+function pushState(webRef: WebView | null, json: string) {
+  if (!webRef) return;
+  const payload = JSON.stringify(json);
+  webRef.injectJavaScript(
+    `(function(){try{if(window.__paperPaint)window.__paperPaint(${payload});}catch(e){}true;})();`,
+  );
+}
+
 /** Street-map WebView — labels stripped; HUD is RN. */
 export function GameMap({ lobby, youId }: Props) {
   const ref = useRef<WebView>(null);
@@ -61,7 +70,7 @@ export function GameMap({ lobby, youId }: Props) {
     if (fp === lastFp.current) return;
     lastFp.current = fp;
     if (!ready.current) return;
-    ref.current?.postMessage(buildStateMessage(lobby, youId));
+    pushState(ref.current, buildStateMessage(lobby, youId));
   }, [lobby, youId]);
 
   return (
@@ -81,7 +90,8 @@ export function GameMap({ lobby, youId }: Props) {
           if (msg.type === "ready") {
             ready.current = true;
             lastFp.current = mapFingerprint(lobbyRef.current, youRef.current);
-            ref.current?.postMessage(
+            pushState(
+              ref.current,
               buildStateMessage(lobbyRef.current, youRef.current),
             );
           }

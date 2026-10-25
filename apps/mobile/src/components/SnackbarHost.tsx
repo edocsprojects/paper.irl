@@ -12,7 +12,7 @@ type Props = {
 export function SnackbarHost({ snack, onClear }: Props) {
   useEffect(() => {
     if (!snack) return;
-    const t = setTimeout(onClear, 3400);
+    const t = setTimeout(onClear, 2200);
     return () => clearTimeout(t);
   }, [snack, onClear]);
 

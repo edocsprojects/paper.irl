@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState as RNAppState, StyleSheet, Text, View } from "react-native";
-import { api, type LobbyPayload } from "../lib/api";
+import { api, TEST_LOCATION, type LobbyPayload } from "../lib/api";
 import { GameMap, mapFingerprint } from "../map/GameMap";
 import { SnackbarHost } from "../components/SnackbarHost";
 import { PlayHud } from "../components/PlayHud";
 import { colors, fonts } from "../theme/tokens";
 import {
+  spawnOverlayVisible,
   type AppState,
   type AppEvent,
   type Session,
 } from "../state/appMachine";
+import { SpawnOverlay } from "./SpawnOverlay";
 import { ResultsOverlay } from "./ResultsOverlay";
 import { RematchWaiting } from "./RematchWaiting";
 import { LobbyCardScreen } from "./LobbyCardScreen";
@@ -23,8 +25,8 @@ type Props = {
 };
 
 /**
- * Live play shell — everyone auto-sims (local player + bots): auto-move and
- * auto-respawn. Street MapLibre basemap; trails + dots lerp between polls.
+ * Live play — auto-move only for the local seat (never auto-plant/respawn).
+ * Ethan taps Create / Start / respawn. Bots auto-move + auto-respawn on server.
  */
 export function GameScreen({
   state,
@@ -42,7 +44,6 @@ export function GameScreen({
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
     [lobby, session.seatId],
   );
-  void you;
 
   const remainingMs = Math.max(0, (lobby?.endsAtMs ?? nowMs) - nowMs);
 
@@ -111,19 +112,15 @@ export function GameScreen({
     return () => clearTimeout(t);
   }, [state.screen, state.countdown, dispatch]);
 
-  // Always auto-sim the local seat (move + plant/respawn like a bot).
+  // Auto-move only — never autoPlant. Human taps SpawnOverlay to plant/respawn.
   useEffect(() => {
     if (!lobby || lobby.phase !== "live") return;
     if (state.countdown != null) return;
     const id = setInterval(() => {
       api
-        .autopilot(session.code, session.seatId, { autoPlant: true })
+        .autopilot(session.code, session.seatId, { autoPlant: false })
         .then((next) => {
           pushLobby(next);
-          const me = next.seats.find((s) => s.id === session.seatId);
-          if (me && (me.mode === "safe" || me.mode === "trailing")) {
-            dispatch({ type: "SPAWN_CONFIRMED" });
-          }
         })
         .catch(() => undefined);
     }, 200);
@@ -133,9 +130,35 @@ export function GameScreen({
     session.code,
     session.seatId,
     pushLobby,
-    dispatch,
     state.countdown,
   ]);
+
+  async function spawn() {
+    const at = you?.respawnAt ?? {
+      lat: TEST_LOCATION.lat,
+      lon: TEST_LOCATION.lon,
+    };
+    try {
+      const next = await api.fix(session.code, session.seatId, {
+        lat: at.lat,
+        lon: at.lon,
+        accuracyM: 5,
+        speedMps: 0,
+        clientTsMs: Date.now(),
+        mock: true,
+        plant: true,
+      });
+      pushLobby(next);
+      dispatch({ type: "SPAWN_CONFIRMED" });
+      dispatch({
+        type: "SNACK",
+        text: "You're planted — claim inside the circle",
+        tone: "good",
+      });
+    } catch (e) {
+      dispatch({ type: "FAIL", error: String(e) });
+    }
+  }
 
   async function playAgain() {
     try {
@@ -180,6 +203,7 @@ export function GameScreen({
     );
   }
 
+  const showSpawn = spawnOverlayVisible(state.screen, false);
   const showResults = state.screen === "results";
   const showRematch = state.screen === "rematch_waiting";
 
@@ -204,6 +228,13 @@ export function GameScreen({
         active={state.screen === "countdown"}
         mountKey={state.mountKey}
         n={state.countdown}
+      />
+
+      <SpawnOverlay
+        active={showSpawn && state.screen !== "countdown"}
+        mountKey={state.mountKey}
+        wiped={state.screen === "death_respawn"}
+        onSpawn={spawn}
       />
 
       <ResultsOverlay

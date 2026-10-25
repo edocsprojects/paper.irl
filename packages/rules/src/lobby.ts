@@ -102,34 +102,34 @@ export function startLobby(state: LobbyState, nowMs: number): Effect[] {
   state.startedAtMs = nowMs;
   state.endsAtMs = nowMs + state.durationMs;
   const effects: Effect[] = [{ kind: "phase", phase: "live" }];
-  // Spread starters on a near-center ring — not stacked, not arena-wide.
-  // ~55–100 m from center with min separation so blobs don't sit on each other;
-  // still close enough for local roam + trail crossings.
+  // Starter circles must not overlap: centers ≥ 2*starterRadius + margin.
+  // Near-center ring — not stacked, not arena-wide — so local roam still crosses.
   const seats = [...state.seats.values()];
   const placed: LatLon[] = [];
-  const minSepM = 52;
+  const minSepM = state.arena.starterRadiusM * 2 + 10;
   for (let i = 0; i < seats.length; i++) {
     const seat = seats[i]!;
     const rand = mulberry(randomSeed(seat.id * 17 + i));
     let at: LatLon | null = null;
-    for (let attempt = 0; attempt < 36; attempt++) {
+    for (let attempt = 0; attempt < 48; attempt++) {
       const ang =
         (i / Math.max(1, seats.length)) * Math.PI * 2 +
-        (rand() - 0.5) * 0.55 +
-        attempt * 0.37;
-      const rad = 58 + rand() * 42 + (attempt % 5) * 6;
+        (rand() - 0.5) * 0.45 +
+        attempt * 0.31;
+      const rad = 62 + rand() * 50 + (attempt % 6) * 8;
       const candidate = fromLocalM(
         state.arena.centerLat,
         state.arena.centerLon,
         Math.cos(ang) * rad,
         Math.sin(ang) * rad,
       );
-      const safe = pickNearestSafePoint(state, candidate, randomSeed(seat.id + attempt));
-      if (
-        placed.every(
-          (p) => haversineM(p.lat, p.lon, safe.lat, safe.lon) >= minSepM,
-        )
-      ) {
+      const safe = pickNearestSafePoint(
+        state,
+        candidate,
+        randomSeed(seat.id + attempt),
+        { placedStarters: placed, minStarterSepM: minSepM },
+      );
+      if (starterPlacementOk(state, safe, placed, seat.id, minSepM)) {
         at = safe;
         break;
       }
@@ -140,10 +140,11 @@ export function startLobby(state: LobbyState, nowMs: number): Effect[] {
         fromLocalM(
           state.arena.centerLat,
           state.arena.centerLon,
-          (rand() - 0.5) * 160,
-          (rand() - 0.5) * 160,
+          (rand() - 0.5) * 180,
+          (rand() - 0.5) * 180,
         ),
         randomSeed(seat.id),
+        { placedStarters: placed, minStarterSepM: minSepM },
       );
     }
     placed.push(at);
@@ -262,16 +263,46 @@ function isPointContested(
   return false;
 }
 
+/** True if planting a starter at `p` would not overlap others' zones/markers. */
+function starterPlacementOk(
+  state: LobbyState,
+  p: LatLon,
+  placed: LatLon[],
+  exceptSeat: SeatId | null,
+  minSepM: number,
+): boolean {
+  if (!isInsideArena(state.arena, p, -8)) return false;
+  if (isPointContested(state, p, exceptSeat)) return false;
+  for (const q of placed) {
+    if (haversineM(p.lat, p.lon, q.lat, q.lon) < minSepM) return false;
+  }
+  for (const s of state.seats.values()) {
+    if (exceptSeat !== null && s.id === exceptSeat) continue;
+    if (s.respawnAt) {
+      if (haversineM(p.lat, p.lon, s.respawnAt.lat, s.respawnAt.lon) < minSepM) {
+        return false;
+      }
+    }
+    // Must not land inside (or on the edge of) anyone else's territory.
+    if (pointInOwned(s, p, state.arena.starterRadiusM + 4)) return false;
+  }
+  return true;
+}
+
 /**
- * Nearest safe freeplay spawn inside the arena (neutral, clear of trails).
+ * Nearest safe freeplay spawn inside the arena (neutral, clear of trails/zones).
  */
 export function pickNearestSafePoint(
   state: LobbyState,
   from: LatLon | null,
   seed = 1,
+  opts?: { placedStarters?: LatLon[]; minStarterSepM?: number },
 ): LatLon {
   const arena = state.arena;
   const rand = mulberry(seed);
+  const placed = opts?.placedStarters ?? [];
+  const minSep =
+    opts?.minStarterSepM ?? state.arena.starterRadiusM * 2 + 10;
   const origin =
     from ??
     fromLocalM(
@@ -282,7 +313,6 @@ export function pickNearestSafePoint(
     );
 
   const candidates: LatLon[] = [origin];
-  // Spiral + random samples across the circle
   for (let i = 0; i < 48; i++) {
     const ang = rand() * Math.PI * 2;
     const r = Math.sqrt(rand()) * arena.radiusM * 0.92;
@@ -315,9 +345,8 @@ export function pickNearestSafePoint(
     );
 
   for (const p of ranked) {
-    if (!isPointContested(state, p, null)) return p;
+    if (starterPlacementOk(state, p, placed, null, minSep)) return p;
   }
-  // Last resort: any in-bounds point
   return ranked[0] ?? clampToArena(arena, origin);
 }
 
@@ -428,13 +457,26 @@ export function applyFix(
   }
   seat.position = pos;
 
-  // Plant — Manual drag uses plant:false so proximity never auto-respawns.
+  // Plant — fix.plant===false (human autopilot) never auto-plants; tap sends plant:true.
   if (seat.mode === "toPlant" || seat.mode === "joining") {
+    const minSep = state.arena.starterRadiusM * 2 + 10;
     if (seat.respawnAt === null) {
       seat.respawnAt = pickNearestSafePoint(state, pos, seat.id);
     }
+    // Never plant inside / overlapping another starter or owned zone.
+    if (
+      !starterPlacementOk(state, seat.respawnAt, [], seat.id, minSep)
+    ) {
+      const moved = pickNearestSafePoint(state, seat.respawnAt, seat.id * 19);
+      seat.respawnAt = moved;
+      effects.push({ kind: "respawnMoved", seatId, at: moved });
+    }
     const d = haversineM(pos.lat, pos.lon, seat.respawnAt.lat, seat.respawnAt.lon);
-    if (d <= state.plantRadiusM && fix.plant !== false) {
+    if (
+      d <= state.plantRadiusM &&
+      fix.plant !== false &&
+      starterPlacementOk(state, seat.respawnAt, [], seat.id, minSep)
+    ) {
       const ring = grantStarter(state, seat, seat.respawnAt);
       seat.mode = "safe";
       seat.position = { ...seat.respawnAt };

@@ -10,22 +10,22 @@ type Props = {
 };
 
 /**
- * Full-screen spawn gate — tap anywhere (demo preference).
- * Enter/leave via FadeGate; unmounts after leave so it cannot stick.
+ * Light tap-to-plant gate (not a cut-error modal).
+ * Cut copy lives on the snackbar toast only.
  */
 export function SpawnOverlay({ active, mountKey, wiped, onSpawn }: Props) {
   return (
     <FadeGate active={active} mountKey={mountKey} style={styles.layer}>
       <Pressable style={styles.fill} onPress={onSpawn}>
         <View style={styles.copyBlock}>
-          <Text style={styles.kicker}>{wiped ? "Wiped" : "Match start"}</Text>
+          <Text style={styles.kicker}>{wiped ? "Respawn" : "Match start"}</Text>
           <Text style={styles.title}>
-            {wiped ? "You were cut" : "Plant marker"}
+            {wiped ? "Tap to reload" : "Plant marker"}
           </Text>
           <Text style={styles.copy}>
             {wiped
-              ? "Land wiped. Move to your respawn marker, then tap to reload into play."
-              : "Run to your marker, then tap anywhere to plant. Others keep playing."}
+              ? "Move to your marker, then tap to get back in."
+              : "Run to your marker, then tap to plant."}
           </Text>
           <View style={styles.btn}>
             <Text style={styles.btnText}>
@@ -40,14 +40,15 @@ export function SpawnOverlay({ active, mountKey, wiped, onSpawn }: Props) {
 
 const styles = StyleSheet.create({
   layer: {
-    backgroundColor: colors.overlay,
+    backgroundColor: "rgba(12,14,16,0.42)",
     zIndex: 20,
   },
   fill: {
     flex: 1,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-end",
     padding: 28,
+    paddingBottom: 56,
   },
   copyBlock: {
     alignItems: "center",
@@ -62,21 +63,21 @@ const styles = StyleSheet.create({
   },
   title: {
     marginTop: 8,
-    fontSize: 32,
+    fontSize: 26,
     fontFamily: fonts.display,
     color: "#f4f6f8",
     letterSpacing: -0.5,
   },
   copy: {
-    marginTop: 10,
+    marginTop: 8,
     textAlign: "center",
     color: "rgba(244,246,248,0.78)",
     fontFamily: fonts.body,
-    lineHeight: 21,
-    fontSize: 15,
+    lineHeight: 20,
+    fontSize: 14,
   },
   btn: {
-    marginTop: 22,
+    marginTop: 18,
     backgroundColor: colors.accent,
     paddingHorizontal: 28,
     paddingVertical: 12,

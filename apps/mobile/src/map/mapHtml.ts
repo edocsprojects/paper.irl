@@ -1,10 +1,16 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 8;
+export const MAP_HTML_REVISION = 9;
+
+/**
+ * Sentinels for verify-map-trails.js — must stay in the loaded HTML.
+ * TRAIL_LAYER_OK proves the visible trail polyline layer ships to the client.
+ */
+export const TRAIL_RENDER_SENTINEL = "TRAIL_LAYER_OK";
 
 /**
  * Street basemap (OpenFreeMap) — labels stripped.
- * Neighborhood zoom; dedicated trail source above fills; dots+tips lerp.
- * Everyone auto-sims — no Manual drag.
+ * Trails: dedicated source ABOVE fills, white casing + dark/high-contrast stroke
+ * (reads on grey roads). State arrives via window.__paperPaint (injectJavaScript).
  */
 export function buildMapHtml(): string {
   return `<!doctype html>
@@ -32,13 +38,18 @@ export function buildMapHtml(): string {
 </head>
 <body>
 <div id="map"></div>
+<!-- ${TRAIL_RENDER_SENTINEL} revision=${MAP_HTML_REVISION} -->
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const STYLE='https://tiles.openfreemap.org/styles/bright';
-/** Neighborhood view — closer than 15.15 so you read; not the old tight 16.35. */
 const PLAY_ZOOM=15.55;
 const CAM_LERP=0.12;
 const DOT_LERP=0.22;
+/** High-contrast trail core — not road grey (#ccc/#eee). */
+const TRAIL_CORE='#111111';
+const TRAIL_CORE_WIDTH=5.5;
+const TRAIL_CASE='#ffffff';
+const TRAIL_CASE_WIDTH=9;
 let map, ready=false;
 let lastFp='';
 let cam={lon:-93.23256,lat:44.97452,zoom:PLAY_ZOOM};
@@ -111,7 +122,6 @@ function followYou(you){
   if(!camRunning) requestAnimationFrame(tickCam);
 }
 
-/** Open trail polyline: fixed samples + live lerped tip while outside. */
 function trailCoords(live){
   const base=(live.trail||[]).map(p=>[p.lon,p.lat]);
   if(live.mode!=='trailing' && base.length<1) return null;
@@ -127,8 +137,44 @@ function trailCoords(live){
   return base.concat([tip]);
 }
 
+function ensureTrailLayers(){
+  if(!map.getSource('trails')){
+    map.addSource('trails',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  }
+  if(!map.getLayer('trails-casing')){
+    map.addLayer({
+      id:'trails-casing',
+      type:'line',
+      source:'trails',
+      paint:{
+        'line-color':TRAIL_CASE,
+        'line-opacity':1,
+        'line-width':TRAIL_CASE_WIDTH,
+        'line-cap':'round',
+        'line-join':'round'
+      }
+    });
+  }
+  /* ${TRAIL_RENDER_SENTINEL}: visible trail polyline above territory fill */
+  if(!map.getLayer('trails')){
+    map.addLayer({
+      id:'trails',
+      type:'line',
+      source:'trails',
+      paint:{
+        'line-color':TRAIL_CORE,
+        'line-opacity':1,
+        'line-width':TRAIL_CORE_WIDTH,
+        'line-cap':'round',
+        'line-join':'round'
+      }
+    });
+  }
+}
+
 function flushLayers(){
-  if(!ready||!map.getSource('players')||!map.getSource('owned')||!map.getSource('trails')||!lastState) return;
+  if(!ready||!map.getSource('players')||!map.getSource('owned')||!lastState) return;
+  ensureTrailLayers();
   const owned={type:'FeatureCollection',features:[]};
   const trails={type:'FeatureCollection',features:[]};
   const players={type:'FeatureCollection',features:[]};
@@ -145,7 +191,11 @@ function flushLayers(){
     }
     const tc=trailCoords(live);
     if(tc && tc.length>=2){
-      trails.features.push({type:'Feature',properties:{color:live.color,border},geometry:{type:'LineString',coordinates:tc}});
+      trails.features.push({
+        type:'Feature',
+        properties:{kind:'trail',seatId:live.id||id},
+        geometry:{type:'LineString',coordinates:tc}
+      });
     }
     players.features.push({
       type:'Feature',
@@ -163,6 +213,8 @@ function flushLayers(){
   map.getSource('owned').setData(owned);
   map.getSource('trails').setData(trails);
   map.getSource('players').setData(players);
+  // Expose for DOM/source assertions in Simulator debugging
+  window.__paperTrailFeatureCount=trails.features.length;
 }
 
 function tickFrame(){
@@ -189,6 +241,7 @@ function syncSeats(seats){
     const prev=seatsLive[seat.id];
     if(!prev){
       seatsLive[seat.id]={
+        id:seat.id,
         lon:pos.lon,lat:pos.lat,tLon:pos.lon,tLat:pos.lat,
         color:seat.color,you:!!seat.you,mode:seat.mode||'player',
         trail:(seat.trail||[]).map(p=>({lat:p.lat,lon:p.lon})),
@@ -234,6 +287,14 @@ function paint(state){
   followYou(you);
 }
 
+/** RN injectJavaScript entry — more reliable than postMessage on iOS HTML WebViews. */
+window.__paperPaint=function(msg){
+  try{
+    const m=typeof msg==='string'?JSON.parse(msg):msg;
+    if(m && m.type==='state') paint(m.state);
+  }catch(err){}
+};
+
 map=new maplibregl.Map({
   container:'map',
   style:STYLE,
@@ -255,18 +316,18 @@ map.on('load',()=>{
   map.addSource('owned',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'owned-fill',type:'fill',source:'owned',paint:{'fill-color':['get','fill'],'fill-opacity':0.34}});
   map.addLayer({id:'owned-border',type:'line',source:'owned',paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.4}});
-  // Dedicated trail source ABOVE fills — bright casing so cut lines read clearly
-  map.addSource('trails',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'trails-casing',type:'line',source:'trails',paint:{'line-color':'#ffffff','line-opacity':0.9,'line-width':7,'line-cap':'round','line-join':'round'}});
-  map.addLayer({id:'trails',type:'line',source:'trails',paint:{'line-color':['get','color'],'line-opacity':1,'line-width':4.5,'line-cap':'round','line-join':'round'}});
+  ensureTrailLayers();
   map.addSource('players',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],14,7],'circle-color':'#fff','circle-stroke-width':['case',['get','you'],4,2.5],'circle-stroke-color':['get','color']}});
-  // Local player clearly larger than bots so "you" reads at neighborhood zoom
-  map.addLayer({id:'players-you-halo',type:'circle',source:'players',filter:['all',['!=',['get','mode'],'marker'],['get','you']],paint:{'circle-radius':18,'circle-color':'#fff','circle-opacity':0.55}});
-  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],15,7],'circle-color':['get','color'],'circle-stroke-width':['case',['get','you'],3.5,2],'circle-stroke-color':'#fff'}});
+  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],9,6],'circle-color':'#fff','circle-stroke-width':['case',['get','you'],3,2],'circle-stroke-color':['get','color']}});
+  // You: modest size + distinct white ring (not a huge blob)
+  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],9.5,6.5],'circle-color':['get','color'],'circle-stroke-width':['case',['get','you'],3.5,1.8],'circle-stroke-color':['case',['get','you'],'#ffffff','#f5f5f5']}});
   ready=true; post({type:'ready'});
 });
-map.on('styledata',()=>{ if(ready) declutter(); });
+map.on('styledata',()=>{
+  if(!ready) return;
+  declutter();
+  ensureTrailLayers();
+});
 document.addEventListener('message',onMsg);
 window.addEventListener('message',onMsg);
 function onMsg(e){

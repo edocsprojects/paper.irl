@@ -191,6 +191,7 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
         state.screen !== "death_respawn" &&
         (wasAlive || state.plantedOnce);
       if (died) {
+        // Toast only — never a modal / raw error for the cut message.
         next.snack = {
           id: (state.snack?.id ?? 0) + 1,
           text: "You were cut — land wiped",

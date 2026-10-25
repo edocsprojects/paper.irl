@@ -4,6 +4,7 @@ import {
   buildKellerArena,
   createLobby,
   fromLocalM,
+  haversineM,
   joinLobby,
   markRematchReady,
   ringAreaM2,
@@ -63,6 +64,25 @@ describe("lobby lifecycle", () => {
       1000,
     );
     expect(effects.some((e) => e.kind === "rejected")).toBe(true);
+  });
+
+  it("places non-overlapping starter markers (no zone stack)", () => {
+    const lobby = createLobby("SEP", arena, { durationMs: 60_000 });
+    for (let i = 0; i < 6; i++) joinLobby(lobby, `P${i}`);
+    startLobby(lobby, 9_000_000);
+    const markers = [...lobby.seats.values()].map((s) => s.respawnAt!);
+    const minSep = arena.starterRadiusM * 2 + 10;
+    for (let i = 0; i < markers.length; i++) {
+      for (let j = i + 1; j < markers.length; j++) {
+        const d = haversineM(
+          markers[i]!.lat,
+          markers[i]!.lon,
+          markers[j]!.lat,
+          markers[j]!.lon,
+        );
+        expect(d).toBeGreaterThanOrEqual(minSep - 0.5);
+      }
+    }
   });
 });
 

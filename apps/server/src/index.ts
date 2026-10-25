@@ -298,9 +298,9 @@ async function main() {
   });
 
   /**
-   * Auto-pilot the local human seat (Auto sim play control).
-   * autoPlant defaults true so the human plays like a bot (move + respawn).
-   * Bots always auto-plant via tickBots regardless.
+   * Auto-pilot the local human seat: movement only by default.
+   * Client sends autoPlant:false so Ethan taps to plant/respawn.
+   * Bots still auto-plant via tickBots.
    */
   app.post<{
     Params: { code: string };

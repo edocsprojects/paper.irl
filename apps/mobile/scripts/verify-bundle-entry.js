@@ -35,6 +35,37 @@ function section(title) {
   console.log(`\n=== ${title} ===`);
 }
 
+section("map trail render HTML (MapLibre layer, not payload-only)");
+{
+  const trailProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-map-trails.js")],
+    { cwd: projectRoot, encoding: "utf8", env: process.env },
+  );
+  process.stdout.write(trailProbe.stdout || "");
+  process.stderr.write(trailProbe.stderr || "");
+  if (trailProbe.status !== 0) {
+    fail(`verify-map-trails exited ${trailProbe.status}`);
+  }
+  const breakProbe = spawnSync(
+    "node",
+    [path.join(__dirname, "verify-map-trails.js")],
+    {
+      cwd: projectRoot,
+      encoding: "utf8",
+      env: { ...process.env, VERIFY_TRAILS_BREAK: "1" },
+    },
+  );
+  process.stdout.write(breakProbe.stdout || "");
+  process.stderr.write(breakProbe.stderr || "");
+  if (breakProbe.status !== 0) {
+    fail(
+      `verify-map-trails BREAK self-check exited ${breakProbe.status} (must fail when layer removed)`,
+    );
+  }
+  ok("verify-map-trails + BREAK self-check");
+}
+
 section("static entry / native config");
 
 if (pkg.main !== "index.js") fail(`package.json main is ${pkg.main}, expected index.js`);
