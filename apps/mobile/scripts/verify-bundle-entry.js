@@ -220,20 +220,25 @@ if (!/index-[a-f0-9]+\.hbc/.test(rootMeta)) {
 }
 ok("root-cwd expo export ./apps/mobile → index-*.hbc");
 
-section("Metro HTTP probe (package cwd = pnpm --filter launch)");
-
-const probe = spawnSync("node", [path.join(__dirname, "metro-http-probe.js")], {
-  cwd: workspaceRoot,
-  encoding: "utf8",
-  env: { ...process.env, CI: "1", EXPO_NO_TELEMETRY: "1" },
-  timeout: 180_000,
-});
-process.stdout.write(probe.stdout || "");
-process.stderr.write(probe.stderr || "");
-if (probe.status !== 0) {
-  fail(`metro-http-probe exited ${probe.status}`);
+for (const launch of ["root", "package"]) {
+  section(
+    launch === "root"
+      ? "Metro HTTP probe — repo root cwd via pnpm --filter (same as pnpm mobile:ios:host-bots)"
+      : "Metro HTTP probe — apps/mobile cwd"
+  );
+  const probe = spawnSync("node", [path.join(__dirname, "metro-http-probe.js")], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+    env: { ...process.env, CI: "1", EXPO_NO_TELEMETRY: "1", METRO_PROBE_LAUNCH: launch },
+    timeout: 180_000,
+  });
+  process.stdout.write(probe.stdout || "");
+  process.stderr.write(probe.stderr || "");
+  if (probe.status !== 0) {
+    fail(`metro-http-probe (${launch}) exited ${probe.status}`);
+  }
+  ok(`metro-http-probe (${launch})`);
 }
-ok("metro-http-probe");
 
-console.log("\nGATE GREEN: babel + AppEntry + index-from-root + root-style Metro launch.");
+console.log("\nGATE GREEN: babel + AppEntry + index-from-root + root and package Metro launches.");
 process.exit(0);

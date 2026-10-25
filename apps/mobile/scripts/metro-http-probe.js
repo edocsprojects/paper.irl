@@ -63,17 +63,26 @@ async function waitForMetro(logRef, child) {
 }
 
 async function main() {
-  console.log(`Starting Metro in ${projectRoot} on :${port} (cwd=package, like pnpm --filter)`);
+  // "root" mirrors `pnpm mobile:ios:host-bots`: cwd = repo root, pnpm --filter
+  // into the mobile package with the same launch env. "package" runs expo directly.
+  const launch = process.env.METRO_PROBE_LAUNCH || "root";
+  const env = {
+    ...process.env,
+    CI: "1",
+    EXPO_NO_TELEMETRY: "1",
+    EXPO_PUBLIC_LAUNCH: "host-bots",
+  };
+  const [cmd, args, cwd] =
+    launch === "package"
+      ? ["npx", ["expo", "start", "--port", String(port)], projectRoot]
+      : [
+          "pnpm",
+          ["--filter", "@paper-irl/mobile", "exec", "expo", "start", "--port", String(port)],
+          workspaceRoot,
+        ];
+  console.log(`Starting Metro (${launch}): cwd=${cwd} $ ${cmd} ${args.join(" ")}`);
 
-  const child = spawn(
-    "npx",
-    ["expo", "start", "--port", String(port), "--non-interactive"],
-    {
-      cwd: projectRoot,
-      env: { ...process.env, CI: "1", EXPO_NO_TELEMETRY: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
-    }
-  );
+  const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
 
   const logRef = { current: "" };
   child.stdout.on("data", (d) => {
@@ -83,15 +92,16 @@ async function main() {
     logRef.current += d.toString();
   });
 
+  // pnpm spawns expo as a grandchild; kill the whole process group.
   const cleanup = () => {
     try {
-      child.kill("SIGTERM");
+      process.kill(-child.pid, "SIGTERM");
     } catch {
       /* ignore */
     }
     setTimeout(() => {
       try {
-        child.kill("SIGKILL");
+        process.kill(-child.pid, "SIGKILL");
       } catch {
         /* ignore */
       }
