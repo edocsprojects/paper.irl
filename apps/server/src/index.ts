@@ -201,7 +201,7 @@ async function main() {
       if (!lobby) return reply.code(404).send({ error: "not_found" });
       try {
         const effects = startLobby(lobby, Date.now());
-        startBotLoop(lobby, 1000);
+        startBotLoop(lobby, 200);
         if (db) {
           await db.query(`UPDATE lobbies SET phase=$2 WHERE code=$1`, [
             lobby.code,
@@ -284,7 +284,7 @@ async function main() {
       }
       stopBotLoop(lobby.code);
       const effects = startRematch(lobby, Date.now());
-      startBotLoop(lobby, 1000);
+      startBotLoop(lobby, 200);
       if (db) {
         await db.query(`UPDATE lobbies SET phase=$2 WHERE code=$1`, [
           lobby.code,
@@ -297,10 +297,14 @@ async function main() {
     }
   });
 
-  /** Auto-pilot one seat (join-bots / host-bots human automation). */
+  /**
+   * Auto-pilot the local human seat (Auto sim play control).
+   * autoPlant defaults true so the human plays like a bot (move + respawn).
+   * Bots always auto-plant via tickBots regardless.
+   */
   app.post<{
     Params: { code: string };
-    Body: { seatId: number; seed?: number };
+    Body: { seatId: number; seed?: number; autoPlant?: boolean };
   }>("/lobbies/:code/autopilot", async (req, reply) => {
     const lobby = lobbies.get(req.params.code.toUpperCase());
     if (!lobby) return reply.code(404).send({ error: "not_found" });
@@ -309,7 +313,8 @@ async function main() {
     const rand = mulberry32((req.body.seed ?? 1) + req.body.seatId * 97 + now);
     const seat = lobby.seats.get(req.body.seatId);
     if (!seat) return reply.code(404).send({ error: "no_seat" });
-    wanderSeat(lobby, seat.id, rand, now);
+    const autoPlant = req.body.autoPlant !== false;
+    wanderSeat(lobby, seat.id, rand, now, { autoPlant });
     return lobbyPayload(lobby);
   });
 

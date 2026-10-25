@@ -19,12 +19,18 @@ export function SpawnOverlay({ active, mountKey, wiped, onSpawn }: Props) {
       <Pressable style={styles.fill} onPress={onSpawn}>
         <View style={styles.copyBlock}>
           <Text style={styles.kicker}>{wiped ? "Wiped" : "Match start"}</Text>
-          <Text style={styles.title}>{wiped ? "Respawn" : "Plant marker"}</Text>
+          <Text style={styles.title}>
+            {wiped ? "You were cut" : "Plant marker"}
+          </Text>
           <Text style={styles.copy}>
-            Run to your marker, then tap anywhere to plant. Others keep playing.
+            {wiped
+              ? "Land wiped. Move to your respawn marker, then tap to reload into play."
+              : "Run to your marker, then tap anywhere to plant. Others keep playing."}
           </Text>
           <View style={styles.btn}>
-            <Text style={styles.btnText}>Tap to spawn</Text>
+            <Text style={styles.btnText}>
+              {wiped ? "Tap to respawn" : "Tap to spawn"}
+            </Text>
           </View>
         </View>
       </Pressable>

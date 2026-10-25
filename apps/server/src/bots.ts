@@ -46,7 +46,8 @@ export function tickBots(lobby: LobbyState, now = Date.now()) {
   }
 }
 
-export function startBotLoop(lobby: LobbyState, ms = 1000) {
+/** ~5 Hz — pairs with human-scale wander steps for smooth trails. */
+export function startBotLoop(lobby: LobbyState, ms = 200) {
   stopBotLoop(lobby.code);
   const id = setInterval(() => {
     if (!lobby || lobby.phase === "ended") {

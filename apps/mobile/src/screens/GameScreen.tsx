@@ -25,9 +25,10 @@ type Props = {
 };
 
 /**
- * Live play shell — street MapLibre basemap (labels/watermark stripped).
- * Data: HTTP poll GET /lobbies/:code ~1s + autopilot/fix POSTs (no websocket).
- * Testing build hardcodes Keller lat/lon (no Simulator GPS).
+ * Live play shell — street MapLibre basemap (labels stripped).
+ * Manual: drag map to move; tap overlay to plant/respawn (no auto-move).
+ * Auto sim: local seat wanders + auto-respawns like a bot.
+ * Bots always auto-move / auto-respawn on the server.
  */
 export function GameScreen({
   state,
@@ -38,8 +39,12 @@ export function GameScreen({
   const lobby = state.lobby;
   const failCount = useRef(0);
   const lastFp = useRef("");
+  const dragBusy = useRef(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [startBusy, setStartBusy] = useState(false);
+
+  const autoSim = session.playControl === "auto_sim";
+  const manual = !autoSim;
 
   const you = useMemo(
     () => lobby?.seats.find((s) => s.id === session.seatId) ?? null,
@@ -78,12 +83,13 @@ export function GameScreen({
       }
     }
     refresh();
-    const id = setInterval(refresh, 1000);
+    // Poll a bit faster than 1s so trails/positions stay fresh when bots tick at 200ms.
+    const id = setInterval(refresh, autoSim ? 400 : 700);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [session.code, pushLobby, dispatch]);
+  }, [session.code, pushLobby, dispatch, autoSim]);
 
   useEffect(() => {
     const sub = RNAppState.addEventListener("change", (next) => {
@@ -113,24 +119,26 @@ export function GameScreen({
     return () => clearTimeout(t);
   }, [state.screen, state.countdown, dispatch]);
 
-  // Testing build: drive seat via autopilot inside Keller arena (hardcoded location).
+  // Auto sim only: drive the local seat like a bot (move + auto-respawn).
   useEffect(() => {
+    if (!autoSim) return;
     if (!lobby || lobby.phase !== "live") return;
     if (state.countdown != null) return;
     const id = setInterval(() => {
       api
-        .autopilot(session.code, session.seatId)
+        .autopilot(session.code, session.seatId, { autoPlant: true })
         .then((next) => {
           pushLobby(next);
           const me = next.seats.find((s) => s.id === session.seatId);
-          if (me && me.mode === "safe") {
+          if (me && (me.mode === "safe" || me.mode === "trailing")) {
             dispatch({ type: "SPAWN_CONFIRMED" });
           }
         })
         .catch(() => undefined);
-    }, 1000);
+    }, 200);
     return () => clearInterval(id);
   }, [
+    autoSim,
     lobby?.phase,
     session.code,
     session.seatId,
@@ -139,9 +147,44 @@ export function GameScreen({
     state.countdown,
   ]);
 
+  const onDragMove = useCallback(
+    (lat: number, lon: number) => {
+      if (!manual) return;
+      if (!lobby || lobby.phase !== "live") return;
+      if (state.countdown != null) return;
+      if (dragBusy.current) return;
+      dragBusy.current = true;
+      api
+        .fix(session.code, session.seatId, {
+          lat,
+          lon,
+          accuracyM: 5,
+          speedMps: 1.5,
+          clientTsMs: Date.now(),
+          mock: true,
+          // Manual drag never auto-plants — tap overlay to respawn.
+          plant: false,
+        })
+        .then((next) => {
+          pushLobby(next);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          dragBusy.current = false;
+        });
+    },
+    [
+      manual,
+      lobby?.phase,
+      state.countdown,
+      session.code,
+      session.seatId,
+      pushLobby,
+    ],
+  );
+
   async function spawn() {
     if (!you?.respawnAt) {
-      // Fallback plant near hardcoded test location if marker missing.
       try {
         const next = await api.fix(session.code, session.seatId, {
           lat: TEST_LOCATION.lat,
@@ -150,6 +193,7 @@ export function GameScreen({
           speedMps: 0,
           clientTsMs: Date.now(),
           mock: true,
+          plant: true,
         });
         pushLobby(next);
         dispatch({ type: "SPAWN_CONFIRMED" });
@@ -167,6 +211,7 @@ export function GameScreen({
         speedMps: 0,
         clientTsMs: Date.now(),
         mock: true,
+        plant: true,
       });
       pushLobby(next);
       dispatch({ type: "SPAWN_CONFIRMED" });
@@ -223,13 +268,19 @@ export function GameScreen({
     );
   }
 
-  const showSpawn = spawnOverlayVisible(state.screen, false);
+  // Auto sim: no spawn gate — bots/human auto-plant. Manual: tap required.
+  const showSpawn = spawnOverlayVisible(state.screen, autoSim);
   const showResults = state.screen === "results";
   const showRematch = state.screen === "rematch_waiting";
 
   return (
     <View style={styles.root}>
-      <GameMap lobby={lobby} youId={session.seatId} />
+      <GameMap
+        lobby={lobby}
+        youId={session.seatId}
+        dragEnabled={manual && lobby.phase === "live" && state.countdown == null}
+        onDragMove={onDragMove}
+      />
 
       <PlayHud
         code={lobby.code}

@@ -70,6 +70,13 @@ export interface Fix {
   speedMps: number;
   clientTsMs: number;
   mock?: boolean;
+  /**
+   * Plant / respawn control while in toPlant:
+   * - true: plant when within plantRadius (tap-to-spawn)
+   * - false: move only — never auto-plant (Manual drag)
+   * - undefined: plant when within plantRadius (bots / Auto sim)
+   */
+  plant?: boolean;
 }
 
 export interface Seat {

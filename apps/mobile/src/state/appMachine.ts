@@ -8,12 +8,17 @@ import type { LaunchMode } from "../lib/config";
 
 export type { LobbyPayload, SeatView };
 
+/** Local player control — chosen on Create setup (plain labels). */
+export type PlayControl = "manual" | "auto_sim";
+
 export type Session = {
   code: string;
   seatId: number;
   nickname: string;
   mode: LaunchMode;
   isHost: boolean;
+  /** Default Manual for this testing build. */
+  playControl: PlayControl;
 };
 
 export type UiScreen =
@@ -182,6 +187,21 @@ export function reduceApp(state: AppState, event: AppEvent): AppState {
         return leaveOverlay({ ...next, countdown: 3 }, "countdown");
       }
       const derived = derivePlayScreen(next);
+      // Human death: snackbar + death_respawn overlay (bots auto-respawn server-side).
+      const wasAlive =
+        state.screen === "playing" ||
+        (state.screen === "countdown" && state.plantedOnce);
+      const died =
+        derived === "death_respawn" &&
+        state.screen !== "death_respawn" &&
+        (wasAlive || state.plantedOnce);
+      if (died) {
+        next.snack = {
+          id: (state.snack?.id ?? 0) + 1,
+          text: "You were cut — land wiped",
+          tone: "bad",
+        };
+      }
       if (derived === state.screen) return next;
       return leaveOverlay(next, derived);
     }

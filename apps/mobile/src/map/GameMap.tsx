@@ -7,6 +7,9 @@ import type { LobbyPayload, SeatView } from "../lib/api";
 type Props = {
   lobby: LobbyPayload;
   youId: number;
+  /** Manual mode: drag on map moves the local player (Simulator). */
+  dragEnabled?: boolean;
+  onDragMove?: (lat: number, lon: number) => void;
 };
 
 export function mapFingerprint(lobby: LobbyPayload, youId: number): string {
@@ -30,7 +33,11 @@ export function mapFingerprint(lobby: LobbyPayload, youId: number): string {
   return `${lobby.arena.id}#${lobby.phase}#${seats}`;
 }
 
-function buildStateMessage(lobby: LobbyPayload, youId: number): string {
+function buildStateMessage(
+  lobby: LobbyPayload,
+  youId: number,
+  dragEnabled: boolean,
+): string {
   const seats = lobby.seats.map((s: SeatView) => ({
     ...s,
     you: s.id === youId,
@@ -42,27 +49,37 @@ function buildStateMessage(lobby: LobbyPayload, youId: number): string {
       mode: lobby.mode,
       seats,
       top3: lobby.top3,
+      dragEnabled,
     },
   });
 }
 
-/** Street-map WebView — labels/watermark stripped; HUD is RN. */
-export function GameMap({ lobby, youId }: Props) {
+/** Street-map WebView — labels stripped; HUD is RN. */
+export function GameMap({
+  lobby,
+  youId,
+  dragEnabled = false,
+  onDragMove,
+}: Props) {
   const ref = useRef<WebView>(null);
   const lastFp = useRef("");
   const ready = useRef(false);
   const lobbyRef = useRef(lobby);
   const youRef = useRef(youId);
+  const dragRef = useRef(dragEnabled);
+  const onDragRef = useRef(onDragMove);
   lobbyRef.current = lobby;
   youRef.current = youId;
+  dragRef.current = dragEnabled;
+  onDragRef.current = onDragMove;
 
   useEffect(() => {
-    const fp = mapFingerprint(lobby, youId);
+    const fp = `${mapFingerprint(lobby, youId)}#drag:${dragEnabled ? 1 : 0}`;
     if (fp === lastFp.current) return;
     lastFp.current = fp;
     if (!ready.current) return;
-    ref.current?.postMessage(buildStateMessage(lobby, youId));
-  }, [lobby, youId]);
+    ref.current?.postMessage(buildStateMessage(lobby, youId, dragEnabled));
+  }, [lobby, youId, dragEnabled]);
 
   return (
     <WebView
@@ -80,10 +97,16 @@ export function GameMap({ lobby, youId }: Props) {
           const msg = JSON.parse(ev.nativeEvent.data);
           if (msg.type === "ready") {
             ready.current = true;
-            lastFp.current = mapFingerprint(lobbyRef.current, youRef.current);
+            lastFp.current = `${mapFingerprint(lobbyRef.current, youRef.current)}#drag:${dragRef.current ? 1 : 0}`;
             ref.current?.postMessage(
-              buildStateMessage(lobbyRef.current, youRef.current),
+              buildStateMessage(
+                lobbyRef.current,
+                youRef.current,
+                dragRef.current,
+              ),
             );
+          } else if (msg.type === "move" && typeof msg.lat === "number") {
+            onDragRef.current?.(msg.lat, msg.lon);
           }
         } catch {
           /* ignore */

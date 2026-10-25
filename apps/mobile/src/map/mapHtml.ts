@@ -1,9 +1,10 @@
 /** Bump when mapHtml changes so Fast Refresh remounts the WebView. */
-export const MAP_HTML_REVISION = 4;
+export const MAP_HTML_REVISION = 6;
 
 /**
- * Street basemap (OpenFreeMap) — labels stripped, compact OSM credit,
- * camera lerps to P1 at neighborhood zoom. Map stays; watermarks/labels go.
+ * Street basemap (OpenFreeMap) — labels stripped.
+ * Continuous rAF: player dots + open trail tips lerp between polls.
+ * Manual mode: drag on the map posts move events (Simulator has no GPS walk).
  */
 export function buildMapHtml(): string {
   return `<!doctype html>
@@ -13,7 +14,7 @@ export function buildMapHtml(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
 <style>
-  html,body,#map{margin:0;height:100%;width:100%;background:#dfe5ea}
+  html,body,#map{margin:0;height:100%;width:100%;background:#dfe5ea;touch-action:none}
   .maplibregl-ctrl-attrib{
     font:500 9px/1.2 Avenir Next,system-ui,sans-serif !important;
     background:rgba(255,255,255,.45) !important;
@@ -35,13 +36,21 @@ export function buildMapHtml(): string {
 <script>
 const STYLE='https://tiles.openfreemap.org/styles/bright';
 const PLAY_ZOOM=16.35;
-const LERP=0.14;
+const CAM_LERP=0.12;
+const DOT_LERP=0.22;
 let map, ready=false;
 let lastFp='';
 let cam={lon:-93.23256,lat:44.97452,zoom:PLAY_ZOOM};
 let target={lon:-93.23256,lat:44.97452};
 let camRunning=false;
 let boundaryDrawn=false;
+let dragEnabled=false;
+let dragging=false;
+let lastMovePost=0;
+/** seatId -> live display state */
+const seatsLive={};
+let rafOn=false;
+let lastState=null;
 
 function post(msg){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }
 function darken(hex,a){const h=hex.replace('#','');const n=parseInt(h.length===3?h.split('').map(c=>c+c).join(''):h,16);
@@ -58,7 +67,6 @@ function circleRing(center,radiusM,steps){
   }
   return out;
 }
-/** Hide street / bus / POI / neighborhood / place labels — keep road geometry. */
 function declutter(){
   const layers=(map.getStyle()&&map.getStyle().layers)||[];
   for(const layer of layers){
@@ -87,14 +95,13 @@ function fingerprint(state){
 }
 function tickCam(){
   camRunning=true;
-  cam.lon += (target.lon-cam.lon)*LERP;
-  cam.lat += (target.lat-cam.lat)*LERP;
+  cam.lon += (target.lon-cam.lon)*CAM_LERP;
+  cam.lat += (target.lat-cam.lat)*CAM_LERP;
   const dLon=Math.abs(target.lon-cam.lon);
   const dLat=Math.abs(target.lat-cam.lat);
   map.jumpTo({center:[cam.lon,cam.lat],zoom:PLAY_ZOOM});
-  if(dLon>1e-7||dLat>1e-7){
-    requestAnimationFrame(tickCam);
-  }else{
+  if(dLon>1e-7||dLat>1e-7) requestAnimationFrame(tickCam);
+  else{
     cam.lon=target.lon; cam.lat=target.lat;
     map.jumpTo({center:[cam.lon,cam.lat],zoom:PLAY_ZOOM});
     camRunning=false;
@@ -106,51 +113,166 @@ function followYou(you){
   target={lon:p.lon,lat:p.lat};
   if(!camRunning) requestAnimationFrame(tickCam);
 }
-function paint(state){
-  if(!ready||!state||!state.arena) return;
-  const fp=fingerprint(state);
-  if(fp===lastFp){
-    followYou((state.seats||[]).find(s=>s.you));
-    return;
+
+/** Open trail for paint: server samples + live lerped tip (always ≥2 when trailing). */
+function trailCoords(live){
+  const base=(live.trail||[]).map(p=>[p.lon,p.lat]);
+  const tip=[live.lon,live.lat];
+  if(live.mode==='trailing' || base.length>=1){
+    if(base.length===0) return [tip, tip];
+    // Replace near-duplicate tip so the line grows smoothly to the moving dot
+    const last=base[base.length-1];
+    if(Math.abs(last[0]-tip[0])<1e-9 && Math.abs(last[1]-tip[1])<1e-9){
+      return base.length>=2 ? base : [base[0], tip];
+    }
+    return base.concat([tip]);
   }
-  lastFp=fp;
-  const arena=state.arena;
+  return null;
+}
+
+function flushLayers(){
+  if(!ready||!map.getSource('players')||!map.getSource('owned')||!lastState) return;
   const owned={type:'FeatureCollection',features:[]};
-  for(const seat of state.seats||[]){
-    const border=darken(seat.color,0.32);
-    for(const ring of (seat.owned||[])){
+  const players={type:'FeatureCollection',features:[]};
+  for(const id of Object.keys(seatsLive)){
+    const live=seatsLive[id];
+    const border=darken(live.color,0.28);
+    for(const ring of (live.owned||[])){
       if(!ring||ring.length<3) continue;
       const coords=ringCoords(ring);
       if(coords.length&&(coords[0][0]!==coords[coords.length-1][0]||coords[0][1]!==coords[coords.length-1][1])){
         coords.push(coords[0]);
       }
-      owned.features.push({type:'Feature',properties:{fill:seat.color,border,kind:'owned'},geometry:{type:'Polygon',coordinates:[coords]}});
+      owned.features.push({type:'Feature',properties:{fill:live.color,border,kind:'owned'},geometry:{type:'Polygon',coordinates:[coords]}});
     }
-    if((seat.trail||[]).length>=2){
-      owned.features.push({type:'Feature',properties:{fill:seat.color,border,kind:'trail'},geometry:{type:'LineString',coordinates:ringCoords(seat.trail)}});
+    const tc=trailCoords(live);
+    if(tc && tc.length>=2){
+      owned.features.push({type:'Feature',properties:{fill:live.color,border,kind:'trail'},geometry:{type:'LineString',coordinates:tc}});
+    }
+    players.features.push({
+      type:'Feature',
+      properties:{color:live.color,you:!!live.you,mode:live.mode||'player'},
+      geometry:{type:'Point',coordinates:[live.lon,live.lat]}
+    });
+    if(live.markerLon!=null){
+      players.features.push({
+        type:'Feature',
+        properties:{color:live.color,you:!!live.you,mode:'marker'},
+        geometry:{type:'Point',coordinates:[live.markerLon,live.markerLat]}
+      });
     }
   }
-  const players={type:'FeatureCollection',features:[]};
-  for(const seat of state.seats||[]){
+  map.getSource('owned').setData(owned);
+  map.getSource('players').setData(players);
+}
+
+function tickFrame(){
+  rafOn=true;
+  let moving=false;
+  for(const id of Object.keys(seatsLive)){
+    const d=seatsLive[id];
+    d.lon += (d.tLon-d.lon)*DOT_LERP;
+    d.lat += (d.tLat-d.lat)*DOT_LERP;
+    if(Math.abs(d.tLon-d.lon)>2e-8||Math.abs(d.tLat-d.lat)>2e-8) moving=true;
+    else{ d.lon=d.tLon; d.lat=d.tLat; }
+  }
+  flushLayers();
+  if(moving) requestAnimationFrame(tickFrame);
+  else rafOn=false;
+}
+
+function syncSeats(seats){
+  const seen={};
+  for(const seat of seats||[]){
     const pos=seat.position||seat.respawnAt;
-    if(pos){
-      players.features.push({type:'Feature',properties:{color:seat.color,you:!!seat.you,mode:seat.mode||'player'},geometry:{type:'Point',coordinates:[pos.lon,pos.lat]}});
-    }
-    if(seat.respawnAt){
-      players.features.push({type:'Feature',properties:{color:seat.color,you:!!seat.you,mode:'marker'},geometry:{type:'Point',coordinates:[seat.respawnAt.lon,seat.respawnAt.lat]}});
+    if(!pos) continue;
+    seen[seat.id]=1;
+    const prev=seatsLive[seat.id];
+    if(!prev){
+      seatsLive[seat.id]={
+        lon:pos.lon,lat:pos.lat,tLon:pos.lon,tLat:pos.lat,
+        color:seat.color,you:!!seat.you,mode:seat.mode||'player',
+        trail:(seat.trail||[]).map(p=>({lat:p.lat,lon:p.lon})),
+        owned:seat.owned||[],
+        markerLon:seat.respawnAt?seat.respawnAt.lon:null,
+        markerLat:seat.respawnAt?seat.respawnAt.lat:null
+      };
+    }else{
+      prev.tLon=pos.lon; prev.tLat=pos.lat;
+      prev.color=seat.color; prev.you=!!seat.you; prev.mode=seat.mode||'player';
+      prev.trail=(seat.trail||[]).map(p=>({lat:p.lat,lon:p.lon}));
+      prev.owned=seat.owned||[];
+      prev.markerLon=seat.respawnAt?seat.respawnAt.lon:null;
+      prev.markerLat=seat.respawnAt?seat.respawnAt.lat:null;
     }
   }
-  if(!boundaryDrawn || (state.arena&&state.arena.id)){
+  for(const id of Object.keys(seatsLive)){
+    if(!seen[id]) delete seatsLive[id];
+  }
+  if(!rafOn) requestAnimationFrame(tickFrame);
+  else flushLayers();
+}
+
+function paint(state){
+  if(!ready||!state||!state.arena) return;
+  lastState=state;
+  if(typeof state.dragEnabled==='boolean') dragEnabled=!!state.dragEnabled;
+  const fp=fingerprint(state);
+  const you=(state.seats||[]).find(s=>s.you);
+  if(fp===lastFp){
+    followYou(you);
+    return;
+  }
+  lastFp=fp;
+  const arena=state.arena;
+  if(!boundaryDrawn){
     const boundary={type:'FeatureCollection',features:[{
       type:'Feature',properties:{},geometry:{type:'LineString',coordinates:circleRing({lat:arena.centerLat,lon:arena.centerLon},arena.radiusM,64)}
     }]};
     map.getSource('boundary').setData(boundary);
     boundaryDrawn=true;
   }
-  map.getSource('owned').setData(owned);
-  map.getSource('players').setData(players);
-  followYou((state.seats||[]).find(s=>s.you));
+  syncSeats(state.seats||[]);
+  followYou(you);
 }
+
+function onPointerDown(e){
+  if(!dragEnabled||!ready) return;
+  dragging=true;
+  try{ map.getCanvas().setPointerCapture(e.pointerId); }catch(err){}
+  moveFromEvent(e);
+}
+function onPointerMove(e){
+  if(!dragging||!dragEnabled) return;
+  moveFromEvent(e);
+}
+function onPointerUp(e){
+  dragging=false;
+  try{ map.getCanvas().releasePointerCapture(e.pointerId); }catch(err){}
+}
+function moveFromEvent(e){
+  const now=Date.now();
+  if(now-lastMovePost<50) return;
+  lastMovePost=now;
+  const rect=map.getCanvas().getBoundingClientRect();
+  const x=(e.clientX!=null?e.clientX:e.touches&&e.touches[0]?e.touches[0].clientX:0)-rect.left;
+  const y=(e.clientY!=null?e.clientY:e.touches&&e.touches[0]?e.touches[0].clientY:0)-rect.top;
+  const ll=map.unproject([x,y]);
+  post({type:'move',lat:ll.lat,lon:ll.lng});
+  // Optimistic local tip so Manual drag feels immediate
+  for(const id of Object.keys(seatsLive)){
+    const d=seatsLive[id];
+    if(d.you){
+      d.tLon=ll.lng; d.tLat=ll.lat;
+      if(d.mode==='trailing'|| (d.trail&&d.trail.length)){
+        /* tip follows via trailCoords */
+      }
+      if(!rafOn) requestAnimationFrame(tickFrame);
+      break;
+    }
+  }
+}
+
 map=new maplibregl.Map({
   container:'map',
   style:STYLE,
@@ -170,12 +292,18 @@ map.on('load',()=>{
   map.addSource('boundary',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'boundary',type:'line',source:'boundary',paint:{'line-color':'#1b1b1b','line-opacity':0.5,'line-width':2,'line-dasharray':[2,1.4]}});
   map.addSource('owned',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'owned-fill',type:'fill',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'fill-color':['get','fill'],'fill-opacity':0.38}});
-  map.addLayer({id:'owned-border',type:'line',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.8}});
-  map.addLayer({id:'trails',type:'line',source:'owned',filter:['==',['get','kind'],'trail'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':3.4,'line-dasharray':[1.4,1.1]}});
+  map.addLayer({id:'owned-fill',type:'fill',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'fill-color':['get','fill'],'fill-opacity':0.36}});
+  map.addLayer({id:'owned-border',type:'line',source:'owned',filter:['==',['get','kind'],'owned'],paint:{'line-color':['get','border'],'line-opacity':0.95,'line-width':2.6}});
+  // Solid bright trails — cut mechanic must be visible
+  map.addLayer({id:'trails',type:'line',source:'owned',filter:['==',['get','kind'],'trail'],paint:{'line-color':['get','border'],'line-opacity':1,'line-width':4.2,'line-cap':'round','line-join':'round'}});
   map.addSource('players',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],9,6],'circle-color':'#fff','circle-stroke-width':3,'circle-stroke-color':['get','color']}});
-  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],10,7],'circle-color':['get','color'],'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
+  map.addLayer({id:'markers',type:'circle',source:'players',filter:['==',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],10,7],'circle-color':'#fff','circle-stroke-width':3,'circle-stroke-color':['get','color']}});
+  map.addLayer({id:'players',type:'circle',source:'players',filter:['!=',['get','mode'],'marker'],paint:{'circle-radius':['case',['get','you'],11,7.5],'circle-color':['get','color'],'circle-stroke-width':2,'circle-stroke-color':'#fff'}});
+  const canvas=map.getCanvas();
+  canvas.addEventListener('pointerdown',onPointerDown);
+  canvas.addEventListener('pointermove',onPointerMove);
+  canvas.addEventListener('pointerup',onPointerUp);
+  canvas.addEventListener('pointercancel',onPointerUp);
   ready=true; post({type:'ready'});
 });
 map.on('styledata',()=>{ if(ready) declutter(); });

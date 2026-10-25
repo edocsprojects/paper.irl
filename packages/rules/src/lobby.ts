@@ -7,6 +7,7 @@ import {
   fromLocalM,
   haversineM,
   isInsideArena,
+  mergeRingsToOne,
   pointInRing,
   polylineLengthM,
   ringAreaM2,
@@ -53,7 +54,8 @@ export function createLobby(
     plantRadiusM: 20,
     pathWidthM: arena.pathWidthM,
     maxSeats: opts?.maxSeats ?? 8,
-    trailSampleM: 4,
+    /** Dense enough that open trails paint quickly at walk/jog step size. */
+    trailSampleM: 1.2,
     boundaryMode: "clamp",
     rematchReady: new Set(),
   };
@@ -385,13 +387,13 @@ export function applyFix(
   }
   seat.position = pos;
 
-  // Plant
+  // Plant — Manual drag uses plant:false so proximity never auto-respawns.
   if (seat.mode === "toPlant" || seat.mode === "joining") {
     if (seat.respawnAt === null) {
       seat.respawnAt = pickNearestSafePoint(state, pos, seat.id);
     }
     const d = haversineM(pos.lat, pos.lon, seat.respawnAt.lat, seat.respawnAt.lon);
-    if (d <= state.plantRadiusM) {
+    if (d <= state.plantRadiusM && fix.plant !== false) {
       const ring = grantStarter(state, seat, seat.respawnAt);
       seat.mode = "safe";
       seat.position = { ...seat.respawnAt };
@@ -447,38 +449,21 @@ export function applyFix(
         claimed.push({ ...claimed[0]! });
       }
       let area = ringAreaM2(claimed);
-      // Thin out-and-back: score corridor ≈ length × path width
-      if (area < 40) {
+      let bankRing = claimed;
+      // Thin out-and-back: corridor ≈ length × path width, inflate for paint
+      if (area < 40 && seat.trail.length >= 2) {
         const len = polylineLengthM(seat.trail);
         area = len * state.pathWidthM;
-        // Inflate a thin sausage around the trail for ownership paint
-        if (seat.trail.length >= 2) {
-          const inflated = inflateTrailRing(seat.trail, state.pathWidthM / 2);
-          seat.owned.push(inflated);
-          stealOverlapping(state, seat, inflated);
-          seat.trail = [];
-          seat.mode = "safe";
-          recomputeArea(seat, state.pathWidthM);
-          effects.push({
-            kind: "banked",
-            seatId,
-            ring: inflated,
-            areaM2: area,
-          });
-          return effects;
-        }
-      } else {
-        seat.owned.push(claimed);
-        stealOverlapping(state, seat, claimed);
+        bankRing = inflateTrailRing(seat.trail, state.pathWidthM / 2);
       }
-      seat.trail = [];
-      seat.mode = "safe";
-      recomputeArea(seat, state.pathWidthM);
+      // ONE connected polygon: starter + enclosed path (never detached blobs)
+      bankTerritory(seat, bankRing, state.pathWidthM);
+      stealOverlapping(state, seat, seat.owned[0]!);
       effects.push({
         kind: "banked",
         seatId,
-        ring: claimed,
-        areaM2: area,
+        ring: seat.owned[0]!,
+        areaM2: seat.areaM2,
       });
       return effects;
     }
@@ -488,6 +473,14 @@ export function applyFix(
   }
 
   return effects;
+}
+
+/** Replace owned with a single merged perimeter (starter ∪ banked loop). */
+function bankTerritory(seat: Seat, newRing: LatLon[], pathWidthM: number) {
+  seat.owned = [mergeRingsToOne([...seat.owned, newRing])];
+  seat.trail = [];
+  seat.mode = "safe";
+  recomputeArea(seat, pathWidthM);
 }
 
 /** Build a thin closed ring around a polyline (stadium / buffer approx). */

@@ -46,6 +46,7 @@ export function JoinScreen({
           nickname: joined.seat.nickname,
           mode: "human",
           isHost: joined.seat.id === hostId,
+          playControl: "manual",
         },
         lobby,
       );

@@ -213,3 +213,67 @@ export function polylineLengthM(line: LatLon[]): number {
   }
   return len;
 }
+
+/**
+ * Convex hull of lat/lon points (monotone chain in local meters).
+ * Returns a closed ring (first == last) suitable for territory paint.
+ */
+export function convexHullLatLon(points: LatLon[]): LatLon[] {
+  if (points.length === 0) return [];
+  if (points.length === 1) return [{ ...points[0]! }, { ...points[0]! }];
+  const origin = points[0]!;
+  const pts = points.map((p) => {
+    const { x, y } = toLocalM(origin.lat, origin.lon, p.lat, p.lon);
+    return { x, y, p };
+  });
+  pts.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+
+  const cross = (
+    o: { x: number; y: number },
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+  ) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+  const lower: typeof pts = [];
+  for (const pt of pts) {
+    while (
+      lower.length >= 2 &&
+      cross(lower[lower.length - 2]!, lower[lower.length - 1]!, pt) <= 0
+    ) {
+      lower.pop();
+    }
+    lower.push(pt);
+  }
+  const upper: typeof pts = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const pt = pts[i]!;
+    while (
+      upper.length >= 2 &&
+      cross(upper[upper.length - 2]!, upper[upper.length - 1]!, pt) <= 0
+    ) {
+      upper.pop();
+    }
+    upper.push(pt);
+  }
+  lower.pop();
+  upper.pop();
+  const hull = [...lower, ...upper].map((h) => ({ ...h.p }));
+  if (hull.length === 0) return [{ ...origin }, { ...origin }];
+  if (
+    hull.length < 2 ||
+    hull[0]!.lat !== hull[hull.length - 1]!.lat ||
+    hull[0]!.lon !== hull[hull.length - 1]!.lon
+  ) {
+    hull.push({ ...hull[0]! });
+  }
+  return hull;
+}
+
+/** Merge multiple rings into one connected outer polygon (convex hull). */
+export function mergeRingsToOne(rings: LatLon[][]): LatLon[] {
+  const pts: LatLon[] = [];
+  for (const ring of rings) {
+    for (const p of ring) pts.push(p);
+  }
+  return convexHullLatLon(pts);
+}

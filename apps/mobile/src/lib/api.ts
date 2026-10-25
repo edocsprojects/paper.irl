@@ -118,10 +118,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ seatId, fix }),
     }),
-  autopilot: (code: string, seatId: number) =>
+  autopilot: (code: string, seatId: number, opts?: { autoPlant?: boolean }) =>
     req<LobbyPayload>(`/lobbies/${code}/autopilot`, {
       method: "POST",
-      body: JSON.stringify({ seatId }),
+      body: JSON.stringify({
+        seatId,
+        autoPlant: opts?.autoPlant !== false,
+      }),
     }),
   rematchReady: (code: string, seatId: number) =>
     req<LobbyPayload>(`/lobbies/${code}/rematch/ready`, {

@@ -106,8 +106,33 @@ describe("plant trail bank cut wipe (freeplay)", () => {
     }
     expect(seat.mode).toBe("safe");
     expect(seat.trail.length).toBe(0);
-    expect(seat.owned.length).toBeGreaterThanOrEqual(2);
-    expect(seat.areaM2).toBeGreaterThan(ringAreaM2(seat.owned[0]!));
+    // Bank merges into ONE connected polygon (starter ∪ loop), not detached blobs.
+    expect(seat.owned.length).toBe(1);
+    expect(seat.areaM2).toBeGreaterThan(500);
+  });
+
+  it("plant:false near marker moves without planting (Manual drag)", () => {
+    const lobby = createLobby("MAN", arena, { durationMs: 60_000 });
+    const { seat } = joinLobby(lobby, "You");
+    const t0 = 1_500_000;
+    startLobby(lobby, t0);
+    const at = seat.respawnAt!;
+    applyFix(
+      lobby,
+      seat.id,
+      { ...fixAt(at.lat, at.lon, t0 + 10), plant: false },
+      t0 + 10,
+    );
+    expect(seat.mode).toBe("toPlant");
+    expect(seat.owned.length).toBe(0);
+    applyFix(
+      lobby,
+      seat.id,
+      { ...fixAt(at.lat, at.lon, t0 + 20), plant: true },
+      t0 + 20,
+    );
+    expect(seat.mode).toBe("safe");
+    expect(seat.owned.length).toBe(1);
   });
 
   it("wipe sends land to neutral and requires respawn before play", () => {
