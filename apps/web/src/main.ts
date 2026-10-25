@@ -551,7 +551,7 @@ async function main() {
         paintUi(true);
         scheduleArrival();
       }
-    }, 900 + Math.random() * 1800);
+    }, 250 + Math.random() * 450);
   }
 
   $("btn-create-go").addEventListener("click", async () => {
