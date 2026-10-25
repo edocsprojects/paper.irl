@@ -1,199 +1,228 @@
 import { describe, expect, it } from "vitest";
 import {
   applyFix,
-  buildKellerFixtureGraph,
+  buildKellerArena,
   createLobby,
+  fromLocalM,
   joinLobby,
+  ringAreaM2,
   startLobby,
   tickLobby,
   topScores,
 } from "../src/index.js";
 
-const graph = buildKellerFixtureGraph(100);
+const arena = buildKellerArena();
 
-function fixAtNode(
-  graphId: typeof graph,
-  nodeId: number,
+function fixAt(
+  lat: number,
+  lon: number,
   t: number,
+  opts?: { speedMps?: number; accuracyM?: number },
 ) {
-  const n = graphId.nodes[nodeId]!;
   return {
-    lat: n.lat,
-    lon: n.lon,
-    accuracyM: 8,
-    speedMps: 2,
+    lat,
+    lon,
+    accuracyM: opts?.accuracyM ?? 8,
+    speedMps: opts?.speedMps ?? 2,
     clientTsMs: t,
   };
 }
 
-describe("keller fixture", () => {
-  it("builds a connected campus-sized graph", () => {
-    expect(graph.nodes.length).toBeGreaterThan(20);
-    expect(graph.edges.length).toBeGreaterThan(20);
-    expect(graph.faces.length).toBeGreaterThan(5);
-    expect(graph.radiusM).toBe(500);
+describe("keller freeplay arena", () => {
+  it("is a 500 m Keller circle", () => {
+    expect(arena.radiusM).toBe(500);
+    expect(arena.centerLat).toBeCloseTo(44.97452, 4);
+    expect(arena.id).toContain("freeplay");
   });
 });
 
 describe("lobby lifecycle", () => {
   it("creates, joins with nicknames, rejects 9th seat", () => {
-    const lobby = createLobby("KELL", graph);
+    const lobby = createLobby("KELL", arena);
     for (let i = 0; i < 8; i++) {
       joinLobby(lobby, `P${i}`);
     }
     expect(lobby.seats.size).toBe(8);
     expect(() => joinLobby(lobby, "X")).toThrow(/lobby_full/);
 
-    const lobby2 = createLobby("K2", graph);
+    const lobby2 = createLobby("K2", arena);
     joinLobby(lobby2, "Alex");
     const { seat } = joinLobby(lobby2, "Alex");
     expect(seat.nickname).toBe("Alex2");
   });
 
   it("requires host start before claims", () => {
-    const lobby = createLobby("KELL", graph);
+    const lobby = createLobby("KELL", arena);
     const { seat } = joinLobby(lobby, "Sam");
-    const n = graph.nodes[0]!;
     const effects = applyFix(
       lobby,
       seat.id,
-      {
-        lat: n.lat,
-        lon: n.lon,
-        accuracyM: 5,
-        speedMps: 1,
-        clientTsMs: 1,
-      },
+      fixAt(arena.centerLat, arena.centerLon, 1),
       1000,
     );
     expect(effects.some((e) => e.kind === "rejected")).toBe(true);
   });
 });
 
-describe("plant trail bank cut wipe", () => {
-  it("plants only near respawn marker then can trail and bank", () => {
-    const lobby = createLobby("KELL", graph, { durationMs: 60_000 });
+describe("plant trail bank cut wipe (freeplay)", () => {
+  it("plants only near respawn marker then can trail and bank a loop", () => {
+    const lobby = createLobby("KELL", arena, { durationMs: 60_000 });
     const { seat } = joinLobby(lobby, "A");
     const t0 = 1_000_000;
     startLobby(lobby, t0);
     expect(seat.mode).toBe("toPlant");
-    expect(seat.respawnNode).not.toBeNull();
+    expect(seat.respawnAt).not.toBeNull();
 
-    const far = graph.nodes.find((n) => n.id !== seat.respawnNode)!;
-    applyFix(lobby, seat.id, fixAtNode(graph, far.id, t0 + 100), t0 + 100);
+    const far = fromLocalM(arena.centerLat, arena.centerLon, 200, 0);
+    applyFix(lobby, seat.id, fixAt(far.lat, far.lon, t0 + 100), t0 + 100);
     expect(seat.mode).toBe("toPlant");
-    expect(seat.ownedEdges.size).toBe(0);
+    expect(seat.owned.length).toBe(0);
 
     applyFix(
       lobby,
       seat.id,
-      fixAtNode(graph, seat.respawnNode!, t0 + 200),
+      fixAt(seat.respawnAt!.lat, seat.respawnAt!.lon, t0 + 200),
       t0 + 200,
     );
     expect(seat.mode).toBe("safe");
-    expect(seat.ownedEdges.size).toBeGreaterThan(0);
-    expect(seat.areaM2).toBeGreaterThan(0);
+    expect(seat.owned.length).toBe(1);
+    expect(seat.areaM2).toBeGreaterThan(500);
+
+    const home = seat.position!;
+    // Walk a square that returns home → bank
+    const offsets: [number, number][] = [
+      [40, 0],
+      [40, 40],
+      [0, 40],
+      [0, 5],
+    ];
+    let t = t0 + 300;
+    for (const [x, y] of offsets) {
+      const p = fromLocalM(home.lat, home.lon, x, y);
+      applyFix(lobby, seat.id, fixAt(p.lat, p.lon, t), t);
+      t += 100;
+    }
+    expect(seat.mode).toBe("safe");
+    expect(seat.trail.length).toBe(0);
+    expect(seat.owned.length).toBeGreaterThanOrEqual(2);
+    expect(seat.areaM2).toBeGreaterThan(ringAreaM2(seat.owned[0]!));
   });
 
   it("wipe sends land to neutral and requires respawn before play", () => {
-    const lobby = createLobby("KELL", graph, { durationMs: 120_000 });
+    const lobby = createLobby("KELL", arena, { durationMs: 120_000 });
     const a = joinLobby(lobby, "A").seat;
     const b = joinLobby(lobby, "B").seat;
     const t0 = 2_000_000;
     startLobby(lobby, t0);
 
-    // Plant both at their markers
-    applyFix(lobby, a.id, fixAtNode(graph, a.respawnNode!, t0 + 1), t0 + 1);
-    applyFix(lobby, b.id, fixAtNode(graph, b.respawnNode!, t0 + 2), t0 + 2);
-    expect(a.mode).toBe("safe");
-    expect(b.mode).toBe("safe");
-
-    // Force A onto a neutral edge to open trail
-    const foreign = graph.edges.find((e) => !a.ownedEdges.has(e.id))!;
-    const node = graph.nodes[foreign.a]!;
     applyFix(
       lobby,
       a.id,
-      {
-        lat: node.lat,
-        lon: node.lon,
-        accuracyM: 5,
-        speedMps: 2,
-        clientTsMs: t0 + 10,
-      },
-      t0 + 10,
+      fixAt(a.respawnAt!.lat, a.respawnAt!.lon, t0 + 1),
+      t0 + 1,
     );
-    expect(a.mode).toBe("trailing");
-    expect(a.trail.length).toBeGreaterThan(0);
-    const trailEdge = a.trail[0]!;
-
-    // B steps on A's trail edge
-    const te = graph.edges[trailEdge]!;
-    const tn = graph.nodes[te.a]!;
-    const beforeOwned = a.ownedEdges.size;
-    expect(beforeOwned).toBeGreaterThan(0);
     applyFix(
       lobby,
       b.id,
-      {
-        lat: tn.lat,
-        lon: tn.lon,
-        accuracyM: 5,
-        speedMps: 2,
-        clientTsMs: t0 + 20,
-      },
-      t0 + 20,
+      fixAt(b.respawnAt!.lat, b.respawnAt!.lon, t0 + 2),
+      t0 + 2,
     );
+    expect(a.mode).toBe("safe");
+    expect(b.mode).toBe("safe");
 
-    expect(a.ownedEdges.size).toBe(0);
+    const home = a.position!;
+    // Stay well outside starter disk (~22 m) + edge slack so we don't auto-bank.
+    const p1 = fromLocalM(home.lat, home.lon, 45, 0);
+    const p2 = fromLocalM(home.lat, home.lon, 70, 0);
+    const p3 = fromLocalM(home.lat, home.lon, 95, 0);
+    applyFix(lobby, a.id, fixAt(p1.lat, p1.lon, t0 + 10), t0 + 10);
+    applyFix(lobby, a.id, fixAt(p2.lat, p2.lon, t0 + 12), t0 + 12);
+    applyFix(lobby, a.id, fixAt(p3.lat, p3.lon, t0 + 15), t0 + 15);
+    expect(a.mode).toBe("trailing");
+    expect(a.trail.length).toBeGreaterThan(1);
+
+    const beforeOwned = a.owned.length;
+    expect(beforeOwned).toBeGreaterThan(0);
+
+    // B steps onto A's open trail (far from A's home)
+    applyFix(lobby, b.id, fixAt(p2.lat, p2.lon, t0 + 20), t0 + 20);
+
+    expect(a.owned.length).toBe(0);
     expect(a.areaM2).toBe(0);
     expect(a.mode).toBe("toPlant");
-    expect(a.respawnNode).not.toBeNull();
-    // Land neutral: no owner on previous edges
-    for (const e of a.ownedEdges) {
-      expect(lobby.edgeOwner.has(e)).toBe(false);
-    }
+    expect(a.respawnAt).not.toBeNull();
 
-    // Cannot claim until plant again — trailing blocked
-    const mid = graph.edges[0]!;
-    const mn = graph.nodes[mid.a]!;
+    const elsewhere = fromLocalM(arena.centerLat, arena.centerLon, -150, 80);
     applyFix(
       lobby,
       a.id,
-      {
-        lat: mn.lat,
-        lon: mn.lon,
-        accuracyM: 5,
-        speedMps: 2,
-        clientTsMs: t0 + 30,
-      },
+      fixAt(elsewhere.lat, elsewhere.lon, t0 + 30),
       t0 + 30,
     );
     expect(a.mode).toBe("toPlant");
-    expect(a.ownedEdges.size).toBe(0);
+    expect(a.owned.length).toBe(0);
+  });
+
+  it("soft-pushes fixes that leave the Keller circle", () => {
+    const lobby = createLobby("KELL", arena, { durationMs: 60_000 });
+    const { seat } = joinLobby(lobby, "A");
+    const t0 = 4_000_000;
+    startLobby(lobby, t0);
+    applyFix(
+      lobby,
+      seat.id,
+      fixAt(seat.respawnAt!.lat, seat.respawnAt!.lon, t0 + 1),
+      t0 + 1,
+    );
+    const wayOut = fromLocalM(arena.centerLat, arena.centerLon, 800, 0);
+    const effects = applyFix(
+      lobby,
+      seat.id,
+      fixAt(wayOut.lat, wayOut.lon, t0 + 2),
+      t0 + 2,
+    );
+    expect(effects.some((e) => e.kind === "boundaryPush")).toBe(true);
+    expect(seat.position).not.toBeNull();
+    const d = Math.hypot(
+      ...(() => {
+        const dx =
+          (seat.position!.lon - arena.centerLon) *
+          111320 *
+          Math.cos((arena.centerLat * Math.PI) / 180);
+        const dy = (seat.position!.lat - arena.centerLat) * 111320;
+        return [dx, dy] as const;
+      })(),
+    );
+    expect(d).toBeLessThanOrEqual(arena.radiusM + 1);
   });
 
   it("ends lobby and ranks top 3 by area", () => {
-    const lobby = createLobby("KELL", graph, { durationMs: 5_000 });
+    const lobby = createLobby("KELL", arena, { durationMs: 5_000 });
     const seats = ["A", "B", "C", "D"].map((n) => joinLobby(lobby, n).seat);
     const t0 = 3_000_000;
     startLobby(lobby, t0);
     for (const s of seats) {
-      applyFix(lobby, s.id, fixAtNode(graph, s.respawnNode!, t0 + 1), t0 + 1);
+      applyFix(
+        lobby,
+        s.id,
+        fixAt(s.respawnAt!.lat, s.respawnAt!.lon, t0 + 1),
+        t0 + 1,
+      );
     }
-    // Give D more land by banking a trail
+    // Give D a banked loop for more area
     const d = seats[3]!;
-    const foreign = graph.edges.find((e) => !d.ownedEdges.has(e.id))!;
-    applyFix(
-      lobby,
-      d.id,
-      fixAtNode(graph, foreign.a, t0 + 2),
-      t0 + 2,
-    );
-    // return to owned
-    const home = [...d.ownedEdges][0]!;
-    const hn = graph.edges[home]!.a;
-    applyFix(lobby, d.id, fixAtNode(graph, hn, t0 + 3), t0 + 3);
+    const home = d.position!;
+    let t = t0 + 2;
+    for (const [x, y] of [
+      [35, 0],
+      [35, 35],
+      [0, 35],
+      [0, 4],
+    ] as [number, number][]) {
+      const p = fromLocalM(home.lat, home.lon, x, y);
+      applyFix(lobby, d.id, fixAt(p.lat, p.lon, t), t);
+      t += 1;
+    }
 
     const effects = tickLobby(lobby, t0 + 6_000);
     expect(lobby.phase).toBe("ended");

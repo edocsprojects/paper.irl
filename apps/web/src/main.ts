@@ -1,9 +1,9 @@
 import maplibregl from "maplibre-gl";
 import {
-  graphFromJson,
+  buildKellerArena,
+  circleRing,
   type Effect,
-  type LobbyGraph,
-  type LobbyGraphJson,
+  type LatLon,
 } from "@paper-irl/rules";
 import { CampusSim, YOU_ID, type SimSnapshot } from "./botSim.js";
 import "./styles.css";
@@ -27,21 +27,16 @@ function darken(hex: string, amount = 0.28): string {
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 }
 
-function edgeLine(graph: LobbyGraph, edgeId: number): [number, number][] {
-  const e = graph.edges[edgeId]!;
-  const a = graph.nodes[e.a]!;
-  const b = graph.nodes[e.b]!;
-  return [
-    [a.lon, a.lat],
-    [b.lon, b.lat],
-  ];
+function ringCoords(ring: LatLon[]): [number, number][] {
+  return ring.map((p) => [p.lon, p.lat]);
 }
 
-function ownedGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
+function ownedGeoJson(snap: SimSnapshot) {
   const features: GeoJSON.Feature[] = [];
   for (const seat of snap.seats) {
     const border = darken(seat.color, 0.32);
-    for (const edgeId of seat.ownedEdges) {
+    for (const ring of seat.owned) {
+      if (ring.length < 3) continue;
       features.push({
         type: "Feature",
         properties: {
@@ -49,10 +44,13 @@ function ownedGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
           border,
           kind: "owned",
         },
-        geometry: { type: "LineString", coordinates: edgeLine(graph, edgeId) },
+        geometry: {
+          type: "Polygon",
+          coordinates: [ringCoords(ring)],
+        },
       });
     }
-    for (const edgeId of seat.trail) {
+    if (seat.trail.length >= 2) {
       features.push({
         type: "Feature",
         properties: {
@@ -60,14 +58,17 @@ function ownedGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
           border,
           kind: "trail",
         },
-        geometry: { type: "LineString", coordinates: edgeLine(graph, edgeId) },
+        geometry: {
+          type: "LineString",
+          coordinates: ringCoords(seat.trail),
+        },
       });
     }
   }
   return { type: "FeatureCollection" as const, features };
 }
 
-function playersGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
+function playersGeoJson(snap: SimSnapshot) {
   const features: GeoJSON.Feature[] = [];
   for (const seat of snap.seats) {
     features.push({
@@ -83,8 +84,7 @@ function playersGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
         coordinates: [seat.lon, seat.lat],
       },
     });
-    if (seat.respawnNode != null) {
-      const n = graph.nodes[seat.respawnNode]!;
+    if (seat.respawnAt) {
       features.push({
         type: "Feature",
         properties: {
@@ -95,7 +95,7 @@ function playersGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
         },
         geometry: {
           type: "Point",
-          coordinates: [n.lon, n.lat],
+          coordinates: [seat.respawnAt.lon, seat.respawnAt.lat],
         },
       });
     }
@@ -103,24 +103,24 @@ function playersGeoJson(graph: LobbyGraph, snap: SimSnapshot) {
   return { type: "FeatureCollection" as const, features };
 }
 
-function pathsGeoJson(graph: LobbyGraph) {
+function boundaryGeoJson(snap: SimSnapshot) {
+  const ring = circleRing(
+    { lat: snap.arena.centerLat, lon: snap.arena.centerLon },
+    snap.arena.radiusM,
+    64,
+  );
   return {
     type: "FeatureCollection" as const,
-    features: graph.edges.map((e) => {
-      const a = graph.nodes[e.a]!;
-      const b = graph.nodes[e.b]!;
-      return {
+    features: [
+      {
         type: "Feature" as const,
         properties: {},
         geometry: {
           type: "LineString" as const,
-          coordinates: [
-            [a.lon, a.lat],
-            [b.lon, b.lat],
-          ],
+          coordinates: ringCoords(ring),
         },
-      };
-    }),
+      },
+    ],
   };
 }
 
@@ -156,7 +156,7 @@ class SnackBus {
         }
       }
       if (e.kind === "planted" && e.seatId === YOU_ID) {
-        this.push("You're planted — go claim paths", "good");
+        this.push("You're planted — go claim ground", "good");
       }
       if (e.kind === "banked" && e.seatId === YOU_ID) {
         this.push("Land banked", "good");
@@ -194,9 +194,6 @@ class SnackBus {
     if (you) {
       if (you.mode === "trailing" && !this.wasTrailing) {
         this.push("Trail open — get home to bank", "neutral");
-      }
-      if (you.areaM2 > this.lastArea + 400 && you.mode === "safe") {
-        // big claim already covered by banked; skip duplicate
       }
       this.wasTrailing = you.mode === "trailing";
       this.lastArea = you.areaM2;
@@ -242,34 +239,38 @@ function renderFinal(snap: SimSnapshot) {
 }
 
 async function main() {
-  const res = await fetch("/keller-graph.json");
-  if (!res.ok) throw new Error("failed to load keller-graph.json");
-  const raw = (await res.json()) as LobbyGraphJson;
-  const graph = graphFromJson(raw);
+  const arena = buildKellerArena();
 
   const map = new maplibregl.Map({
     container: "map",
     style: STREET_STYLE,
-    center: [graph.centerLon, graph.centerLat],
-    zoom: 16.2,
+    center: [arena.centerLon, arena.centerLat],
+    zoom: 15.4,
     pitch: 0,
     maxBounds: [
-      [graph.centerLon - 0.02, graph.centerLat - 0.015],
-      [graph.centerLon + 0.02, graph.centerLat + 0.015],
+      [arena.centerLon - 0.02, arena.centerLat - 0.015],
+      [arena.centerLon + 0.02, arena.centerLat + 0.015],
     ],
   });
 
   await map.once("load");
 
-  map.addSource("paths", { type: "geojson", data: pathsGeoJson(graph) });
+  let sim = new CampusSim(arena);
+  const snacks = new SnackBus();
+
+  map.addSource("boundary", {
+    type: "geojson",
+    data: boundaryGeoJson(sim.snapshot()),
+  });
   map.addLayer({
-    id: "paths",
+    id: "boundary",
     type: "line",
-    source: "paths",
+    source: "boundary",
     paint: {
-      "line-color": "#6b7280",
-      "line-opacity": 0.45,
-      "line-width": 1.8,
+      "line-color": "#1b1b1b",
+      "line-opacity": 0.55,
+      "line-width": 2.2,
+      "line-dasharray": [2, 1.4],
     },
   });
 
@@ -277,20 +278,16 @@ async function main() {
     type: "geojson",
     data: { type: "FeatureCollection", features: [] },
   });
-  // Soft fill (lighter / wider)
   map.addLayer({
     id: "owned-fill",
-    type: "line",
+    type: "fill",
     source: "owned",
     filter: ["==", ["get", "kind"], "owned"],
     paint: {
-      "line-color": ["get", "fill"],
-      "line-opacity": 0.38,
-      "line-width": 14,
-      "line-blur": 0.4,
+      "fill-color": ["get", "fill"],
+      "fill-opacity": 0.38,
     },
   });
-  // Deep border
   map.addLayer({
     id: "owned-border",
     type: "line",
@@ -299,7 +296,7 @@ async function main() {
     paint: {
       "line-color": ["get", "border"],
       "line-opacity": 0.95,
-      "line-width": 4.5,
+      "line-width": 2.8,
     },
   });
   map.addLayer({
@@ -345,8 +342,6 @@ async function main() {
     },
   });
 
-  let sim = new CampusSim(graph);
-  const snacks = new SnackBus();
   let playing = true;
   let speed = 30;
   let acc = 0;
@@ -381,7 +376,6 @@ async function main() {
     paint();
   }
 
-  // Tap/click anywhere on the spawn overlay (not button-only).
   spawnEl.addEventListener("click", (ev) => {
     ev.preventDefault();
     doSpawn();
@@ -425,7 +419,7 @@ async function main() {
         spawnKicker.textContent = "Match start";
         spawnTitle.textContent = "Ready to plant";
         spawnCopy.textContent =
-          "You're Player 1. Tap anywhere to drop on your marker — other runners are already moving.";
+          "You're Player 1. Tap anywhere to drop on your marker — bots already wander the Keller circle.";
       }
       spawnEl.classList.remove("hidden");
     } else {
@@ -438,10 +432,9 @@ async function main() {
     if (!you) return;
     let lat = you.lat;
     let lon = you.lon;
-    if (snap.youNeedSpawn && you.respawnNode != null) {
-      const n = graph.nodes[you.respawnNode]!;
-      lat = n.lat;
-      lon = n.lon;
+    if (snap.youNeedSpawn && you.respawnAt) {
+      lat = you.respawnAt.lat;
+      lon = you.respawnAt.lon;
     }
     map.easeTo({
       center: [lon, lat],
@@ -463,11 +456,14 @@ async function main() {
     syncSpawnUi(snap);
     if (effects.length) snacks.onEffects(effects, snap);
     snacks.onSnapshot(snap);
+    (map.getSource("boundary") as maplibregl.GeoJSONSource).setData(
+      boundaryGeoJson(snap),
+    );
     (map.getSource("owned") as maplibregl.GeoJSONSource).setData(
-      ownedGeoJson(graph, snap),
+      ownedGeoJson(snap),
     );
     (map.getSource("players") as maplibregl.GeoJSONSource).setData(
-      playersGeoJson(graph, snap),
+      playersGeoJson(snap),
     );
     followYou(snap);
   }

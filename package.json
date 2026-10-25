@@ -2,7 +2,7 @@
   "name": "paper-irl",
   "private": true,
   "version": "0.1.0",
-  "description": "IRL paper.io on campus roads — Keller Hall MVP",
+  "description": "IRL paper.io freeplay GPS inside a campus boundary — Keller Hall MVP",
   "scripts": {
     "build": "pnpm -r run build",
     "test": "pnpm --filter @paper-irl/rules test && pnpm sim:lobby",

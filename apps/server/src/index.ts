@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import {
   applyFix,
-  buildKellerFixtureGraph,
+  buildKellerArena,
   createLobby,
   joinLobby,
   seatPublicView,
@@ -15,8 +15,9 @@ import {
 /**
  * Minimal HTTP API for local demos.
  * Live play state is in-memory. Postgres is optional (DATABASE_URL).
+ * Freeplay MVP: GPS polylines inside Keller circle (no path-graph required).
  */
-const graph = buildKellerFixtureGraph(90);
+const arena = buildKellerArena();
 const lobbies = new Map<string, LobbyState>();
 
 function code() {
@@ -60,16 +61,17 @@ async function main() {
 
   app.get("/health", async () => ({
     ok: true,
-    graph: graph.id,
-    nodes: graph.nodes.length,
-    edges: graph.edges.length,
+    mode: "freeplay",
+    arena: arena.id,
+    radiusM: arena.radiusM,
+    center: { lat: arena.centerLat, lon: arena.centerLon },
   }));
 
   app.post<{
     Body: { durationMs?: number };
   }>("/lobbies", async (req) => {
     const c = code();
-    const lobby = createLobby(c, graph, {
+    const lobby = createLobby(c, arena, {
       durationMs: req.body?.durationMs ?? 15 * 60 * 1000,
     });
     lobbies.set(c, lobby);
@@ -80,7 +82,7 @@ async function main() {
         [c, lobby.durationMs, lobby.phase],
       );
     }
-    return { code: c, phase: lobby.phase, maxSeats: lobby.maxSeats };
+    return { code: c, phase: lobby.phase, maxSeats: lobby.maxSeats, mode: "freeplay" };
   });
 
   app.post<{
@@ -148,6 +150,7 @@ async function main() {
         code: lobby.code,
         phase: lobby.phase,
         endsAtMs: lobby.endsAtMs,
+        mode: "freeplay",
         seats: [...lobby.seats.values()].map(seatPublicView),
         top3: topScores(lobby, 3).map(seatPublicView),
       };

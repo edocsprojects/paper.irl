@@ -1,13 +1,18 @@
 import {
   applyFix,
+  buildKellerArena,
+  clampToArena,
   createLobby,
+  fromLocalM,
   joinLobby,
-  pickNearestSafeNode,
+  pickNearestSafePoint,
   startLobby,
   tickLobby,
+  toLocalM,
   topScores,
+  type Arena,
   type Effect,
-  type LobbyGraph,
+  type LatLon,
   type LobbyState,
   type Seat,
 } from "@paper-irl/rules";
@@ -34,10 +39,9 @@ export interface SimSnapshotSeat {
   areaM2: number;
   lat: number;
   lon: number;
-  trail: number[];
-  ownedEdges: number[];
-  respawnNode: number | null;
-  headNode: number | null;
+  trail: LatLon[];
+  owned: LatLon[][];
+  respawnAt: LatLon | null;
 }
 
 export interface SimSnapshot {
@@ -50,38 +54,113 @@ export interface SimSnapshot {
   seats: SimSnapshotSeat[];
   top3: { id: number; nickname: string; color: string; areaM2: number }[];
   you: SimSnapshotSeat | null;
+  arena: Arena;
 }
 
-function seatLatLon(state: LobbyState, seat: Seat): { lat: number; lon: number } {
-  const g = state.graph;
-  const nodeId =
-    seat.headNode ??
-    seat.respawnNode ??
-    g.nodes[Math.floor(g.nodes.length / 2)]!.id;
-  const n = g.nodes[nodeId]!;
-  return { lat: n.lat, lon: n.lon };
+function seatLatLon(state: LobbyState, seat: Seat): LatLon {
+  if (seat.position) return seat.position;
+  if (seat.respawnAt) return seat.respawnAt;
+  return {
+    lat: state.arena.centerLat,
+    lon: state.arena.centerLon,
+  };
 }
 
-function youTrailEdges(state: LobbyState): Set<number> {
+function youTrailPoints(state: LobbyState): LatLon[] {
   const you = state.seats.get(YOU_ID);
-  if (!you || you.mode !== "trailing") return new Set();
-  const s = new Set(you.trail);
-  if (you.headEdge != null) s.add(you.headEdge);
-  return s;
+  if (!you || you.mode !== "trailing") return [];
+  return you.trail;
 }
 
-function stepToNeighbor(
-  graph: LobbyGraph,
-  nodeId: number,
+function nearYouTrail(p: LatLon, youTrail: LatLon[], padM: number): boolean {
+  if (youTrail.length < 2) return false;
+  for (const t of youTrail) {
+    const dx =
+      (p.lon - t.lon) *
+      111320 *
+      Math.cos((p.lat * Math.PI) / 180);
+    const dy = (p.lat - t.lat) * 111320;
+    if (Math.hypot(dx, dy) < padM) return true;
+  }
+  return false;
+}
+
+const headings = new Map<number, number>();
+
+function wanderStep(
+  state: LobbyState,
+  seat: Seat,
   rand: () => number,
-  avoidEdges?: Set<number>,
-): number {
-  const edges = graph.nodeEdges.get(nodeId) ?? [];
-  const choices = edges.filter((id) => !avoidEdges?.has(id));
-  const pool = choices.length ? choices : edges;
-  if (!pool.length) return nodeId;
-  const e = graph.edges[pool[Math.floor(rand() * pool.length)]!]!;
-  return e.a === nodeId ? e.b : e.a;
+  opts: { protectYou: boolean; homeBias: number },
+): LatLon {
+  const arena = state.arena;
+  let pos =
+    seat.position ??
+    seat.respawnAt ??
+    ({ lat: arena.centerLat, lon: arena.centerLon } as LatLon);
+
+  if (seat.mode === "toPlant" && seat.respawnAt) {
+    return { ...seat.respawnAt };
+  }
+
+  let heading = headings.get(seat.id) ?? rand() * Math.PI * 2;
+  const avoid = opts.protectYou ? youTrailPoints(state) : [];
+
+  if (opts.protectYou && seat.id === YOU_ID && seat.mode === "safe" && seat.owned[0]) {
+    // Stay near starter during protect
+    const c = seat.owned[0][0]!;
+    const local = toLocalM(c.lat, c.lon, pos.lat, pos.lon);
+    if (Math.hypot(local.x, local.y) > 12) {
+      heading = Math.atan2(-local.y, -local.x) + (rand() - 0.5) * 0.4;
+    } else {
+      heading += (rand() - 0.5) * 0.8;
+    }
+  } else if (seat.id !== YOU_ID && seat.mode === "safe" && rand() < 0.4) {
+    const prey = [...state.seats.values()].find(
+      (s) =>
+        s.id !== seat.id &&
+        !(opts.protectYou && s.id === YOU_ID) &&
+        s.mode === "trailing" &&
+        s.trail.length >= 2,
+    );
+    if (prey) {
+      const tip = prey.trail[prey.trail.length - 1]!;
+      const local = toLocalM(pos.lat, pos.lon, tip.lat, tip.lon);
+      heading = Math.atan2(local.y, local.x);
+    } else {
+      heading += (rand() - 0.5) * 1.0;
+    }
+  } else if (seat.mode === "trailing" && rand() < opts.homeBias && seat.owned[0]) {
+    const home = seat.owned[0][0]!;
+    const local = toLocalM(pos.lat, pos.lon, home.lat, home.lon);
+    heading = Math.atan2(local.y, local.x) + (rand() - 0.5) * 0.7;
+  } else {
+    heading += (rand() - 0.5) * 1.15;
+  }
+
+  const stepM = 3.5 + rand() * 5.5;
+  let next = fromLocalM(
+    pos.lat,
+    pos.lon,
+    Math.cos(heading) * stepM,
+    Math.sin(heading) * stepM,
+  );
+  next = clampToArena(arena, next);
+
+  if (opts.protectYou && seat.id !== YOU_ID && nearYouTrail(next, avoid, 18)) {
+    heading += Math.PI * (0.5 + rand() * 0.5);
+    next = clampToArena(
+      arena,
+      fromLocalM(pos.lat, pos.lon, Math.cos(heading) * stepM, Math.sin(heading) * stepM),
+    );
+  }
+
+  const after = toLocalM(arena.centerLat, arena.centerLon, next.lat, next.lon);
+  if (Math.hypot(after.x, after.y) > arena.radiusM * 0.96) {
+    heading += Math.PI * (0.55 + rand() * 0.5);
+  }
+  headings.set(seat.id, heading);
+  return next;
 }
 
 function botStep(
@@ -91,59 +170,17 @@ function botStep(
   now: number,
   opts: { protectYou: boolean },
 ): Effect[] {
-  const graph = state.graph;
-  let nodeId = seat.headNode ?? seat.respawnNode ?? 0;
-  const avoid = opts.protectYou ? youTrailEdges(state) : undefined;
-
-  if (seat.mode === "toPlant" && seat.respawnNode !== null) {
-    nodeId = seat.respawnNode;
-  } else if (seat.id === YOU_ID) {
-    const owned = [...seat.ownedEdges];
-    // During protect (and generally when safe), stay on owned corridors first.
-    if (opts.protectYou && owned.length && seat.mode === "safe") {
-      const e = graph.edges[owned[Math.floor(rand() * owned.length)]!]!;
-      nodeId = rand() < 0.5 ? e.a : e.b;
-    } else if (seat.mode === "trailing" && owned.length) {
-      const home = graph.edges[owned[Math.floor(rand() * owned.length)]!]!;
-      nodeId = rand() < 0.5 ? home.a : home.b;
-    } else if (seat.mode === "safe" && owned.length && rand() < 0.7) {
-      const e = graph.edges[owned[Math.floor(rand() * owned.length)]!]!;
-      nodeId = rand() < 0.5 ? e.a : e.b;
-    } else {
-      nodeId = stepToNeighbor(graph, nodeId, rand);
-    }
-  } else if (seat.mode === "safe" && rand() < 0.4) {
-    // Hunt other bots' trails — never Player 1 while protected.
-    const prey = [...state.seats.values()].find(
-      (s) =>
-        s.id !== seat.id &&
-        !(opts.protectYou && s.id === YOU_ID) &&
-        s.mode === "trailing" &&
-        s.headEdge !== null,
-    );
-    if (prey?.headEdge != null) {
-      const e = graph.edges[prey.headEdge]!;
-      nodeId = rand() < 0.5 ? e.a : e.b;
-    } else {
-      nodeId = stepToNeighbor(graph, nodeId, rand, avoid);
-    }
-  } else {
-    const edges = graph.nodeEdges.get(nodeId) ?? [];
-    if (edges.length && rand() > 0.12) {
-      nodeId = stepToNeighbor(graph, nodeId, rand, avoid);
-    } else {
-      // No random teleport onto the map — that caused instant P1 wipes.
-      nodeId = stepToNeighbor(graph, nodeId, rand, avoid);
-    }
-  }
-
-  const n = graph.nodes[nodeId]!;
+  const homeBias = seat.id === YOU_ID ? 0.55 : 0.32;
+  const pos = wanderStep(state, seat, rand, {
+    protectYou: opts.protectYou,
+    homeBias,
+  });
   return applyFix(
     state,
     seat.id,
     {
-      lat: n.lat + (rand() - 0.5) * 0.000015,
-      lon: n.lon + (rand() - 0.5) * 0.000015,
+      lat: pos.lat + (rand() - 0.5) * 0.000012,
+      lon: pos.lon + (rand() - 0.5) * 0.000012,
       accuracyM: 5 + rand() * 4,
       speedMps: 1 + rand() * 2.5,
       clientTsMs: now,
@@ -167,10 +204,11 @@ export class CampusSim {
   private seed: number;
   private youProtectUntilMs = 0;
 
-  constructor(graph: LobbyGraph, seed = 42) {
+  constructor(arena: Arena = buildKellerArena(), seed = 42) {
     this.seed = seed;
     this.rand = mulberry32(seed);
-    this.state = createLobby("DEMO", graph, {
+    headings.clear();
+    this.state = createLobby("DEMO", arena, {
       durationMs: 15 * 60 * 1000,
       maxSeats: BOTS,
     });
@@ -184,11 +222,12 @@ export class CampusSim {
   }
 
   restart() {
-    const graph = this.state.graph;
+    const arena = this.state.arena;
     this.rand = mulberry32(this.seed + 1);
     this.seed += 1;
     this.youProtectUntilMs = 0;
-    this.state = createLobby("DEMO", graph, {
+    headings.clear();
+    this.state = createLobby("DEMO", arena, {
       durationMs: 15 * 60 * 1000,
       maxSeats: BOTS,
     });
@@ -210,10 +249,9 @@ export class CampusSim {
     }
     if (you.mode !== "toPlant" && you.mode !== "joining") return [];
 
-    // Re-pick nearest safe node at click time (bots may have claimed the old marker).
-    const from = you.respawnNode ?? you.headNode;
-    you.respawnNode = pickNearestSafeNode(this.state, from, you.id * 17);
-    const n = this.state.graph.nodes[you.respawnNode]!;
+    const from = you.respawnAt ?? you.position;
+    you.respawnAt = pickNearestSafePoint(this.state, from, you.id * 17);
+    const n = you.respawnAt;
     const effects = applyFix(
       this.state,
       YOU_ID,
@@ -241,7 +279,6 @@ export class CampusSim {
     const pauseYou = youAwaitingSpawn(this.state);
     const protectYou = this.nowMs < this.youProtectUntilMs;
 
-    // Other bots first, then You — avoids same-tick open-trail → cut.
     const others = [...this.state.seats.values()].filter((s) => s.id !== YOU_ID);
     const you = this.state.seats.get(YOU_ID);
 
@@ -257,13 +294,13 @@ export class CampusSim {
       );
     }
 
-    // Forced hunts among bots only (never P1).
+    // Forced hunts among bots only (never P1)
     if (Math.floor((this.nowMs - this.t0) / 1000) % 7 === 0) {
       const prey = [...this.state.seats.values()].find(
         (s) =>
           s.id !== YOU_ID &&
           s.mode === "trailing" &&
-          (s.trail.length > 0 || s.headEdge !== null),
+          s.trail.length >= 2,
       );
       const hunter = [...this.state.seats.values()].find(
         (s) =>
@@ -273,16 +310,14 @@ export class CampusSim {
           s.id !== prey.id,
       );
       if (prey && hunter) {
-        const edgeId = prey.headEdge ?? prey.trail[prey.trail.length - 1]!;
-        const e = this.state.graph.edges[edgeId]!;
-        const n = this.state.graph.nodes[e.a]!;
+        const tip = prey.trail[Math.floor(prey.trail.length / 2)]!;
         effects.push(
           ...applyFix(
             this.state,
             hunter.id,
             {
-              lat: n.lat,
-              lon: n.lon,
+              lat: tip.lat,
+              lon: tip.lon,
               accuracyM: 5,
               speedMps: 2,
               clientTsMs: this.nowMs,
@@ -296,21 +331,18 @@ export class CampusSim {
 
     effects.push(...tickLobby(this.state, this.nowMs));
 
-    // If a cut still landed on You during protect, restore the wipe (demo guard).
-    // Prefer prevention above; this is a backstop so the overlay doesn't flash.
     if (protectYou && you) {
       const cut = effects.find((e) => e.kind === "cut" && e.victimId === YOU_ID);
       if (cut && cut.kind === "cut" && you.mode === "toPlant") {
-        // Soft recovery: stay planted at marker without replaying full bank history.
-        const nodeId = you.respawnNode ?? pickNearestSafeNode(this.state, null, YOU_ID);
-        you.respawnNode = nodeId;
-        const n = this.state.graph.nodes[nodeId]!;
+        const at =
+          you.respawnAt ?? pickNearestSafePoint(this.state, null, YOU_ID);
+        you.respawnAt = at;
         applyFix(
           this.state,
           YOU_ID,
           {
-            lat: n.lat,
-            lon: n.lon,
+            lat: at.lat,
+            lon: at.lon,
             accuracyM: 5,
             speedMps: 1,
             clientTsMs: this.nowMs,
@@ -336,10 +368,9 @@ export class CampusSim {
         areaM2: seat.areaM2,
         lat,
         lon,
-        trail: [...seat.trail],
-        ownedEdges: [...seat.ownedEdges],
-        respawnNode: seat.respawnNode,
-        headNode: seat.headNode,
+        trail: seat.trail.map((p) => ({ ...p })),
+        owned: seat.owned.map((ring) => ring.map((p) => ({ ...p }))),
+        respawnAt: seat.respawnAt ? { ...seat.respawnAt } : null,
       };
     });
     const top3 = topScores(this.state, 3).map((s) => ({
@@ -358,6 +389,7 @@ export class CampusSim {
       seats,
       top3,
       you: seats.find((s) => s.id === YOU_ID) ?? null,
+      arena: this.state.arena,
     };
   }
 }
